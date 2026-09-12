@@ -6,7 +6,10 @@ import {
   DownloadResult,
   FileMetadata,
   RemoteFile,
-  StorageQuota
+  StorageQuota,
+  ListFilesOptions,
+  PaginatedFilesResult,
+  ChangeListResult
 } from './types';
 
 export interface StorageProvider {
@@ -38,7 +41,22 @@ export interface StorageProvider {
   /**
    * Lists files located in a folder, or from the root folder if not specified.
    */
-  listFiles(folderId?: string): Promise<RemoteFile[]>;
+  listFiles(folderId?: string, options?: ListFilesOptions): Promise<RemoteFile[]>;
+
+  /**
+   * Retrieves single page of remote files.
+   */
+  listPaginatedFiles?(folderId?: string, options?: ListFilesOptions): Promise<PaginatedFilesResult>;
+
+  /**
+   * Gets initial page token for Google Drive / Storage Changes API.
+   */
+  getStartPageToken?(): Promise<string>;
+
+  /**
+   * Queries changes since a given page token for delta synchronization.
+   */
+  listChanges?(pageToken: string): Promise<ChangeListResult>;
 
   /**
    * Retrieves single remote file descriptor by ID.

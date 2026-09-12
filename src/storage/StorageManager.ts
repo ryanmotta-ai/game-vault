@@ -6,6 +6,7 @@ import { logger } from '../core/logger';
 import { NotFoundError, AccountAlreadyConnectedError } from '../core/errors/AppError';
 import { StorageAccountsRepository } from '../database/repositories/storageAccountsRepository';
 import { GoogleDriveProvider } from '../providers/google-drive/GoogleDriveProvider';
+import { getCredentialStore } from '../core/security/CredentialStore';
 
 export class StorageManager {
   private static instance: StorageManager;
@@ -45,7 +46,15 @@ export class StorageManager {
     }
   }
 
-  public registerProvider(account: StorageAccount): StorageProvider {
+  public registerProvider(accountOrProvider: StorageAccount | StorageProvider): StorageProvider {
+    if ('type' in accountOrProvider && !('providerType' in accountOrProvider)) {
+      const provider = accountOrProvider as StorageProvider;
+      this.providers.set(provider.id, provider);
+      this.log.info(`Registered direct provider '${provider.name}' (${provider.id}) [Type: ${provider.type}]`);
+      return provider;
+    }
+
+    const account = accountOrProvider as StorageAccount;
     const provider = ProviderFactory.create(account.providerType, {
       accountId: account.id,
       accountName: account.accountName,
@@ -99,13 +108,35 @@ export class StorageManager {
     const providerAccountId = gdrive.providerAccountId || tempId;
     const accountEmail = authResult.accountEmail;
 
+    let finalId = tempId;
+    let finalCredentialKey = tempCredentialKey;
+    const now = new Date().toISOString();
+    let createdAt = now;
+
     // Check if account is already registered
     if (this.accountsRepo) {
       const existing = this.accountsRepo.getByProviderAccountId(providerType, providerAccountId);
-      if (existing && existing.status === 'ACTIVE') {
-        // Disconnect temp
-        await tempProvider.disconnect();
-        throw new AccountAlreadyConnectedError(accountEmail);
+      if (existing) {
+        if (existing.status === 'ACTIVE') {
+          // Disconnect temp
+          await tempProvider.disconnect();
+          throw new AccountAlreadyConnectedError(accountEmail);
+        }
+
+        // Reuse existing record
+        finalId = existing.id;
+        finalCredentialKey = existing.credentialKey || `${providerType}:${finalId}`;
+        createdAt = existing.createdAt;
+
+        // Transfer credentials from temporary key to the permanent existing key
+        const credStore = getCredentialStore();
+        const payload = await credStore.getTokenPayload(tempCredentialKey);
+        if (payload) {
+          await credStore.setTokenPayload(finalCredentialKey, payload);
+          if (finalCredentialKey !== tempCredentialKey) {
+            await credStore.delete(tempCredentialKey);
+          }
+        }
       }
     }
 
@@ -120,18 +151,17 @@ export class StorageManager {
       this.log.warn('Could not fetch quota immediately upon connection:', err);
     }
 
-    const now = new Date().toISOString();
     const account: StorageAccount = {
-      id: tempId,
+      id: finalId,
       providerType,
       providerAccountId,
       accountName: customName || authResult.accountName || 'Google Drive Account',
       accountEmail,
-      credentialKey: tempCredentialKey,
+      credentialKey: finalCredentialKey,
       status: 'ACTIVE',
       quotaTotalBytes: quotaTotal,
       quotaUsedBytes: quotaUsed,
-      createdAt: now,
+      createdAt,
       updatedAt: now,
       lastAuthenticatedAt: now
     };
@@ -140,7 +170,19 @@ export class StorageManager {
       this.accountsRepo.upsert(account);
     }
 
-    this.providers.set(account.id, tempProvider);
+    // Register active provider instance with final account ID
+    const activeProvider =
+      finalId === tempId
+        ? tempProvider
+        : ProviderFactory.create(providerType, {
+            accountId: finalId,
+            accountName: account.accountName,
+            providerAccountId: account.providerAccountId,
+            accountEmail: account.accountEmail,
+            credentialKey: finalCredentialKey
+          });
+
+    this.providers.set(account.id, activeProvider);
     this.log.info(`Successfully connected and registered account '${account.accountName}' (${account.id})`);
     return account;
   }
@@ -215,6 +257,13 @@ export class StorageManager {
 
   public getActiveAccountsCount(): number {
     return this.providers.size;
+  }
+
+  public getAccounts(): StorageAccount[] {
+    if (this.accountsRepo) {
+      return this.accountsRepo.getByStatus('ACTIVE');
+    }
+    return [];
   }
 
   public async getQuotaSummary(accounts: StorageAccount[]): Promise<StorageQuotaSummary> {

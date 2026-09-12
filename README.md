@@ -67,7 +67,23 @@ cp .env.example .env
 | `npm run start` | Runs the compiled production application with Electron |
 | `npm run typecheck` | Runs strict TypeScript verification across all files (`tsc --noEmit`) |
 | `npm run lint` | Runs ESLint 9 Flat Config static analysis |
-| `npm run test:db` | Runs comprehensive migration, security, multi-account, and repository tests |
+| `npm test` | Runs the complete test suite (Phase 2A database/auth + Phase 2B catalog discovery) |
+| `npm run test:db` | Runs Phase 2A migration, security, multi-account, and repository tests |
+| `npm run test:phase2b` | Runs all 25 automated scenarios for Phase 2B cloud scanning & catalog ingestion |
+
+---
+
+## 🎮 Cloud Inventory & Game Discovery Highlights (Phase 2B)
+
+- **Principle**: *"The user collects games, not files."* File IDs, complex paths, and MIME types are abstracted away into clean game cards.
+- **Queue-Based BFS Traversal**: Scans Google Drive directory hierarchies without recursion stack limits, supporting page sizes up to 1000 items.
+- **Network Resilience**: Automatic retry with exponential backoff and jitter for `429 Too Many Requests`, `403 rateLimitExceeded`, and `5xx` server errors (`fetchWithRetry`).
+- **Google Drive Changes API**: Delta synchronization tracks additions, modifications, renames, moves, and deletions incrementally.
+- **Contextual Heuristic Classification**: Distinguishes exclusive ROMs (0.95–0.99 confidence), contextual ambiguous files (`.iso`, `.exe`, `.zip`), and ignored files (`.txt`, `.mp3`).
+- **Multi-Track BIN/CUE Grouping**: Collapses multi-track disc images (e.g. 25 `.bin` tracks + 1 `.cue`) into a single catalog entry.
+- **Collision-Proof Slugs**: Generates unique identifiers formatted as `${slugify(title)}-${slugify(platform)}`.
+- **Non-Destructive Deletion**: Trashed cloud files mark records as `MISSING` without losing user play time, notes, or metadata.
+- **Interactive UI Controls**: Per-account scan triggers, "Scan All Accounts", real-time progress bar with phase indicators, and cancellation support.
 
 ---
 

@@ -104,10 +104,30 @@ export class CredentialStoreError extends AppError {
   }
 }
 
+export class CredentialStoreUnavailableError extends CredentialStoreError {
+  constructor(message = 'Secure credential storage (safeStorage/DPAPI) is unavailable on this system.') {
+    super(message);
+    Object.assign(this, { code: 'CREDENTIAL_STORE_UNAVAILABLE', statusCode: 503 });
+  }
+}
+
 export class GoogleApiError extends StorageError {
   constructor(message: string, public readonly status = 500, details?: unknown) {
     super(`Google Drive API Error (${status}): ${message}`, details);
     Object.assign(this, { code: 'GOOGLE_API_ERROR', statusCode: status });
+  }
+}
+
+export class SyncCancelledError extends AppError {
+  constructor(message = 'Cloud inventory synchronization was cancelled by user.') {
+    super(message, 'SYNC_CANCELLED', 499);
+  }
+}
+
+export class RateLimitExceededError extends StorageError {
+  constructor(message = 'Storage API rate limit exceeded.', public readonly retryAfterSeconds?: number) {
+    super(message);
+    Object.assign(this, { code: 'RATE_LIMIT_EXCEEDED', statusCode: 429 });
   }
 }
 

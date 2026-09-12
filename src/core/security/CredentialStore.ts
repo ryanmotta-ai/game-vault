@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import { safeStorage } from 'electron';
 import { configManager } from '../config';
 import { logger } from '../logger';
-import { CredentialStoreError } from '../errors/AppError';
+import { CredentialStoreError, CredentialStoreUnavailableError } from '../errors/AppError';
 
 export interface TokenPayload {
   accessToken: string;
@@ -68,14 +68,34 @@ export class MemoryCredentialStore implements CredentialStore {
  * Production CredentialStore utilizing Electron's safeStorage (Windows DPAPI / macOS Keychain / Linux secret service).
  * Encrypted buffers are persisted in a protected AppData credentials folder.
  */
+export interface DpapiCredentialStoreOptions {
+  customDir?: string;
+  allowInsecureFallback?: boolean;
+}
+
 export class DpapiCredentialStore implements CredentialStore {
   private credentialsDir: string;
+  private allowInsecureFallback: boolean;
   private log = logger.child('CredentialStore');
 
-  constructor(customDir?: string) {
+  constructor(options?: string | DpapiCredentialStoreOptions) {
+    const customDir = typeof options === 'string' ? options : options?.customDir;
+    this.allowInsecureFallback =
+      typeof options === 'object' && options?.allowInsecureFallback !== undefined
+        ? options.allowInsecureFallback
+        : process.env.GAMEVAULT_ALLOW_INSECURE_CREDENTIALS === 'true' || process.env.NODE_ENV === 'test';
+
     const baseDir = customDir || configManager.get('appDataDir');
     this.credentialsDir = path.join(baseDir, 'credentials');
     this.ensureDirectory();
+  }
+
+  private isEncryptionAvailable(): boolean {
+    return !!(safeStorage && safeStorage.isEncryptionAvailable());
+  }
+
+  private canUseFallback(): boolean {
+    return this.allowInsecureFallback;
   }
 
   private ensureDirectory(): void {
@@ -96,12 +116,11 @@ export class DpapiCredentialStore implements CredentialStore {
   public async set(key: string, value: string): Promise<void> {
     this.ensureDirectory();
     try {
-      if (safeStorage && safeStorage.isEncryptionAvailable()) {
+      if (this.isEncryptionAvailable()) {
         const encryptedBuffer = safeStorage.encryptString(value);
         fs.writeFileSync(this.getFilePath(key), encryptedBuffer);
-      } else {
-        // Fallback for non-electron environments (e.g. Node runner)
-        // Uses machine-local key derived from machine ID / user path
+      } else if (this.canUseFallback()) {
+        this.log.warn(`safeStorage unavailable. Using dev/test AES-256-GCM fallback for credential key: ${key}`);
         const fallbackKey = crypto.createHash('sha256').update(configManager.get('appDataDir')).digest();
         const iv = crypto.randomBytes(12);
         const cipher = crypto.createCipheriv('aes-256-gcm', fallbackKey, iv);
@@ -109,9 +128,14 @@ export class DpapiCredentialStore implements CredentialStore {
         const tag = cipher.getAuthTag();
         const combined = Buffer.concat([iv, tag, encrypted]);
         fs.writeFileSync(this.getFilePath(key), combined);
+      } else {
+        throw new CredentialStoreUnavailableError(
+          'Electron safeStorage (DPAPI) is not available and insecure fallback is disabled in production.'
+        );
       }
       this.log.debug(`Saved encrypted credential for key: ${key}`);
     } catch (err) {
+      if (err instanceof CredentialStoreError) throw err;
       this.log.error(`Failed to securely save credential for key ${key}:`, err);
       throw new CredentialStoreError(`Failed to save credential for '${key}'`, err);
     }
@@ -125,10 +149,9 @@ export class DpapiCredentialStore implements CredentialStore {
 
     try {
       const buffer = fs.readFileSync(filePath);
-      if (safeStorage && safeStorage.isEncryptionAvailable()) {
+      if (this.isEncryptionAvailable()) {
         return safeStorage.decryptString(buffer);
-      } else {
-        // Fallback decryption
+      } else if (this.canUseFallback()) {
         const fallbackKey = crypto.createHash('sha256').update(configManager.get('appDataDir')).digest();
         const iv = buffer.subarray(0, 12);
         const tag = buffer.subarray(12, 28);
@@ -136,8 +159,13 @@ export class DpapiCredentialStore implements CredentialStore {
         const decipher = crypto.createDecipheriv('aes-256-gcm', fallbackKey, iv);
         decipher.setAuthTag(tag);
         return decipher.update(encrypted, undefined, 'utf8') + decipher.final('utf8');
+      } else {
+        throw new CredentialStoreUnavailableError(
+          'Electron safeStorage (DPAPI) is not available and insecure fallback is disabled in production.'
+        );
       }
     } catch (err) {
+      if (err instanceof CredentialStoreError) throw err;
       this.log.error(`Failed to decrypt credential for key ${key}:`, err);
       throw new CredentialStoreError(`Failed to retrieve credential for '${key}'`, err);
     }

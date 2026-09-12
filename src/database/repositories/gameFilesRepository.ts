@@ -48,6 +48,34 @@ export class GameFilesRepository {
     return row ? mapRowToFile(row) : null;
   }
 
+  public getByRemoteFileId(storageAccountId: string, remoteFileId: string): GameFile | null {
+    const stmt = this.db.prepare(`
+      SELECT * FROM game_files
+      WHERE storage_account_id = ? AND remote_file_id = ?
+    `);
+    const row = stmt.get(storageAccountId, remoteFileId) as GameFileRow | undefined;
+    return row ? mapRowToFile(row) : null;
+  }
+
+  public getByStorageAccountId(storageAccountId: string): GameFile[] {
+    const stmt = this.db.prepare(`
+      SELECT * FROM game_files
+      WHERE storage_account_id = ?
+      ORDER BY filename ASC
+    `);
+    const rows = stmt.all(storageAccountId) as GameFileRow[];
+    return rows.map(mapRowToFile);
+  }
+
+  public updateRemotePath(id: string, remotePath: string): void {
+    const stmt = this.db.prepare(`
+      UPDATE game_files
+      SET remote_path = ?, updated_at = ?
+      WHERE id = ?
+    `);
+    stmt.run(remotePath, new Date().toISOString(), id);
+  }
+
   public upsert(file: GameFile): void {
     const stmt = this.db.prepare(`
       INSERT INTO game_files (

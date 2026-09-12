@@ -44,6 +44,22 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     loadData();
+
+    if (!window.gameVault) return;
+    const unsub = window.gameVault.onSyncProgress(async (progress) => {
+      if (progress.status === 'COMPLETED') {
+        showToast(`✨ Cloud sync complete! Discovered ${progress.gamesDetected} games.`);
+        await loadData();
+      } else if (progress.status === 'FAILED') {
+        showToast(`❌ Sync failed for ${progress.accountName || 'storage'}: ${progress.error || 'Unknown error'}`);
+      } else if (progress.status === 'CANCELLED') {
+        showToast(`⚠️ Sync cancelled for ${progress.accountName || 'storage'}.`);
+      }
+    });
+
+    return () => {
+      unsub();
+    };
   }, [loadData]);
 
   const handleGameAction = async (game: Game) => {

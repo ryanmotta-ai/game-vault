@@ -4,6 +4,10 @@ import { GamesRepository } from '../../database/repositories/gamesRepository';
 import { StorageAccountsRepository } from '../../database/repositories/storageAccountsRepository';
 import { DownloadsRepository } from '../../database/repositories/downloadsRepository';
 import { SettingsRepository } from '../../database/repositories/settingsRepository';
+import { CloudFilesRepository } from '../../database/repositories/cloudFilesRepository';
+import { SyncStateRepository } from '../../database/repositories/syncStateRepository';
+import { CatalogIngestionService } from '../../catalog/CatalogIngestionService';
+import { SyncCoordinator } from '../../sync/SyncCoordinator';
 import { StorageManager } from '../../storage/StorageManager';
 import { CacheManager } from '../../storage/CacheManager';
 import { DownloadManager } from '../../downloads/DownloadManager';
@@ -16,6 +20,10 @@ export interface IpcContext {
   accountsRepo: StorageAccountsRepository;
   downloadsRepo: DownloadsRepository;
   settingsRepo: SettingsRepository;
+  cloudFilesRepo: CloudFilesRepository;
+  syncStateRepo: SyncStateRepository;
+  catalogIngestion: CatalogIngestionService;
+  syncCoordinator: SyncCoordinator;
   storageManager: StorageManager;
   cacheManager: CacheManager;
   downloadManager: DownloadManager;
@@ -111,6 +119,72 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     }
     const provider = ctx.storageManager.getProvider(accountId);
     return await provider.listFiles(folderId);
+  });
+
+  // --- Sync & Cloud Inventory Handlers ---
+  ctx.syncCoordinator.onProgress((progress) => {
+    if (ctx.mainWindow && !ctx.mainWindow.isDestroyed()) {
+      ctx.mainWindow.webContents.send(IPC_CHANNELS.SYNC_PROGRESS_EVENT, progress);
+    }
+  });
+
+  wrapHandler(IPC_CHANNELS.SYNC_SCAN_ACCOUNT, async (accountId: string) => {
+    if (!accountId || typeof accountId !== 'string') {
+      throw new ValidationError('Valid account ID is required for sync.');
+    }
+    await ctx.syncCoordinator.syncAccount(accountId);
+    return {
+      success: true,
+      latestRun: ctx.syncStateRepo.getLatestSyncRun(accountId)
+    };
+  });
+
+  wrapHandler(IPC_CHANNELS.SYNC_SCAN_ALL, async () => {
+    await ctx.syncCoordinator.syncAllAccounts();
+    return { success: true };
+  });
+
+  wrapHandler(IPC_CHANNELS.SYNC_CANCEL, (accountId?: string) => {
+    if (accountId && typeof accountId !== 'string') {
+      throw new ValidationError('Invalid account ID provided for cancellation.');
+    }
+    ctx.syncCoordinator.cancelSync(accountId);
+    return { success: true };
+  });
+
+  wrapHandler(IPC_CHANNELS.SYNC_GET_STATUS, (accountId: string) => {
+    if (!accountId || typeof accountId !== 'string') {
+      throw new ValidationError('Valid account ID is required.');
+    }
+    return {
+      syncState: ctx.syncStateRepo.getSyncState(accountId),
+      activeProgress: ctx.syncCoordinator.getSyncStatus(accountId),
+      latestRun: ctx.syncStateRepo.getLatestSyncRun(accountId)
+    };
+  });
+
+  wrapHandler(IPC_CHANNELS.SYNC_GET_SUMMARY, () => {
+    const accounts = ctx.accountsRepo.getAll();
+    let totalFiles = 0;
+    const accountSummaries = accounts.map((acc) => {
+      const counts = ctx.cloudFilesRepo.countByAccountId(acc.id);
+      const syncState = ctx.syncStateRepo.getSyncState(acc.id);
+      totalFiles += counts.files;
+      return {
+        accountId: acc.id,
+        fileCount: counts.files,
+        folderCount: counts.folders,
+        totalCount: counts.total,
+        lastSyncAt: syncState?.lastIncrementalSyncAt || syncState?.lastFullScanAt || null,
+        status: acc.status
+      };
+    });
+    const allGames = ctx.gamesRepo.getAll();
+    return {
+      totalFiles,
+      totalGames: allGames.length,
+      accounts: accountSummaries
+    };
   });
 
   // --- Downloads Handlers ---

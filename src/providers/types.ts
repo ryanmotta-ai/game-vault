@@ -10,6 +10,31 @@ export interface RemoteFile {
   isFolder: boolean;
   parentFolderId?: string;
   path?: string;
+  trashed?: boolean;
+}
+
+export interface ListFilesOptions {
+  pageToken?: string;
+  pageSize?: number;
+  query?: string;
+}
+
+export interface PaginatedFilesResult {
+  files: RemoteFile[];
+  nextPageToken?: string;
+}
+
+export interface RemoteChange {
+  fileId: string;
+  removed: boolean;
+  file?: RemoteFile;
+  time?: string;
+}
+
+export interface ChangeListResult {
+  changes: RemoteChange[];
+  newStartPageToken?: string;
+  nextPageToken?: string;
 }
 
 export interface StorageQuota {

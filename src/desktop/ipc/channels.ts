@@ -14,6 +14,14 @@ export const IPC_CHANNELS = {
   STORAGE_CLEAR_CACHE: 'storage:clearCache',
   STORAGE_LIST_FILES: 'storage:listFiles',
 
+  // Cloud Inventory & Sync
+  SYNC_SCAN_ACCOUNT: 'sync:scanAccount',
+  SYNC_SCAN_ALL: 'sync:scanAll',
+  SYNC_CANCEL: 'sync:cancel',
+  SYNC_GET_STATUS: 'sync:getStatus',
+  SYNC_GET_SUMMARY: 'sync:getSummary',
+  SYNC_PROGRESS_EVENT: 'sync:progressEvent',
+
   // Downloads
   DOWNLOADS_GET_ALL: 'downloads:getAll',
   DOWNLOADS_QUEUE: 'downloads:queue',

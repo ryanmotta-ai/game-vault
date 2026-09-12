@@ -69,6 +69,28 @@ export const GameCard: React.FC<GameCardProps> = ({ game, onAction }) => {
           <StatusBadge state={game.state} />
         </div>
 
+        {/* Fallback Artwork Display when no coverUrl is available */}
+        {!game.coverUrl && (
+          <div
+            style={{
+              position: 'absolute',
+              inset: 0,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              background: 'radial-gradient(circle at center, rgba(59, 130, 246, 0.12) 0%, rgba(15, 23, 42, 0.85) 100%)',
+              zIndex: 0
+            }}
+          >
+            <span style={{ fontSize: '42px', opacity: 0.5 }}>🎮</span>
+            <span style={{ fontSize: '10px', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              Vault Catalog
+            </span>
+          </div>
+        )}
+
         {/* Bottom Shade Overlay */}
         <div
           style={{

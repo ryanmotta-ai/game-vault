@@ -181,11 +181,11 @@ Connected cloud and network storage accounts.
 - Fields: `provider_type`, `provider_account_id`, `account_name`, `account_email`, `credential_key`, `status` (`ACTIVE` | `DISCONNECTED` | `ERROR` | `REVOKED`), `quota_total_bytes`, `quota_used_bytes`, `last_synced_at`, `last_authenticated_at`, `created_at`, `updated_at`.
 - Indices: `idx_storage_accounts_provider_acc` on `(provider_type, provider_account_id)`.
 
-### 3. `game_files`
+### 3. `game_files` (Updated in Migration 004)
 Remote and local binary files associated with games.
 - Primary Key: `id`
 - Foreign Keys: `game_id` references `games(id)` ON DELETE CASCADE, `storage_account_id` references `storage_accounts(id)`.
-- Fields: `remote_file_id`, `remote_path`, `filename`, `size_bytes`, `md5_checksum`, `status` (`REMOTE` | `DOWNLOADING` | `CACHED_LOCAL`), `local_path`, timestamps.
+- Fields: `remote_file_id`, `remote_path`, `filename`, `size_bytes`, `md5_checksum`, `status` (`CLOUD` | `DOWNLOADING` | `READY` | `CORRUPTED` | `MISSING`), `local_path`, timestamps.
 
 ### 4. `downloads`
 Active and historical download queue.
@@ -202,6 +202,18 @@ Configured console emulators.
 Persistent application key-value configuration.
 - Primary Key: `key`
 - Fields: `value` (JSON serialized), `updated_at`.
+
+### 7. `cloud_files` (Added in Migration 003)
+Raw inventory of all discovered files in connected cloud accounts.
+- Primary Key: `id` (UUID)
+- Foreign Key: `storage_account_id` references `storage_accounts(id)` ON DELETE CASCADE.
+- Fields: `remote_file_id`, `name`, `remote_path`, `parent_folder_id`, `size_bytes`, `mime_type`, `md5_checksum`, `is_folder`, `trashed`, `classification`, `confidence_score`, `metadata_json`, timestamps.
+- Constraints: `UNIQUE(storage_account_id, remote_file_id)`.
+
+### 8. `storage_sync_state` & `sync_runs` (Added in Migration 004)
+Sync tokens and audit logging for initial and incremental synchronization.
+- `storage_sync_state`: `storage_account_id`, `initial_scan_completed`, `start_page_token`, `next_change_page_token`, `last_full_scan_at`, `last_incremental_sync_at`, `last_error`, timestamps.
+- `sync_runs`: `id`, `storage_account_id`, `started_at`, `finished_at`, `status`, `folders_scanned`, `files_scanned`, `games_detected`, `error_message`.
 
 ---
 
@@ -251,7 +263,7 @@ flowchart LR
 3. **OS-Level Credential Protection (DPAPI)**:
    - OAuth access tokens and refresh tokens are managed via `CredentialStore`.
    - Implemented using Windows DPAPI via Electron's `safeStorage.encryptString()` and `decryptString()`.
-   - Automatic AES-256-GCM hardware/user-bound key derivation fallback for headless/CI environments.
+   - Fail-secure behavior: throws `CredentialStoreUnavailableError` if OS cryptography is unavailable without explicit override.
    - Credentials are **never** stored in SQLite and are **never** exposed to the renderer process.
 
 4. **Least-Privilege Scopes**:
@@ -264,3 +276,26 @@ flowchart LR
    - `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`.
    - CSP strictly configured in `src/desktop/security.ts`.
    - IPC channels validate input arguments before handling.
+
+---
+
+## 7. Cloud Inventory & Game Discovery Pipeline (Phase 2B)
+
+See complete design documentation in [docs/CLOUD_SCANNING.md](docs/CLOUD_SCANNING.md).
+
+```mermaid
+flowchart LR
+    Cloud["Google Drive API"] -->|"BFS Queue (listPaginatedFiles)"| Scanner["CloudInventoryScanner"]
+    Scanner -->|"Batch Upsert"| CloudFiles["cloud_files (Raw Inventory)"]
+    CloudFiles -->|"Contextual Heuristics"| Classifier["FileClassifier"]
+    Classifier -->|"Normalize Title & Group Multi-Track"| Resolver["GameCandidateResolver"]
+    Resolver -->|"HIGH Confidence (>= 0.75)"| Ingestion["CatalogIngestionService"]
+    Ingestion -->|"Atomic Transactions"| Catalog["games & game_files"]
+```
+
+Key capabilities:
+- **Resilient Traversal**: BFS queue avoids call-stack overflow; handles pagination up to 1000 items/page; exponential backoff with jitter on 429/403/5xx errors.
+- **Delta Sync**: Anchors `startPageToken` before initial scan and processes incremental changes via `listChanges(pageToken)`.
+- **Heuristic Classification**: Discerns exclusive ROMs (0.95–0.99), contextual ambiguous files (`.iso`, `.exe`, `.zip`), and filtered non-game items (`.txt`, `.mp3`).
+- **Grouping & Collisions**: Collapses multi-track BIN/CUE games into single entries; generates collision-proof slugs (`${slugify(title)}-${slugify(platform)}`).
+- **Non-Destructive Deletion**: Trashed cloud files mark `game_files.status = 'MISSING'` while preserving user catalog metadata and play history.

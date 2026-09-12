@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { StorageAccount, StorageQuotaSummary, StorageProviderType } from '../../core/types';
+import React, { useState, useEffect } from 'react';
+import { StorageAccount, StorageQuotaSummary, StorageProviderType, SyncProgress } from '../../core/types';
 import { formatBytes } from '../components/StorageIndicator';
 
 interface StorageScreenProps {
@@ -27,6 +27,88 @@ export const StorageScreen: React.FC<StorageScreenProps> = ({
 
   const [newAccountName, setNewAccountName] = useState('');
   const [selectedProvider, setSelectedProvider] = useState<StorageProviderType>('google_drive');
+
+  // Sync state
+  const [syncProgressMap, setSyncProgressMap] = useState<Record<string, SyncProgress>>({});
+  const [syncSummaryMap, setSyncSummaryMap] = useState<
+    Record<string, { fileCount: number; folderCount: number; lastSyncAt: string | null }>
+  >({});
+  const [isScanningAll, setIsScanningAll] = useState(false);
+
+  const refreshSyncSummaries = async () => {
+    if (!window.gameVault) return;
+    try {
+      const summary = await window.gameVault.getSyncSummary();
+      const map: Record<string, { fileCount: number; folderCount: number; lastSyncAt: string | null }> = {};
+      for (const item of summary.accounts) {
+        map[item.accountId] = {
+          fileCount: item.fileCount,
+          folderCount: item.folderCount,
+          lastSyncAt: item.lastSyncAt
+        };
+      }
+      setSyncSummaryMap(map);
+    } catch (err) {
+      console.error('Failed to fetch sync summary:', err);
+    }
+  };
+
+  useEffect(() => {
+    refreshSyncSummaries();
+
+    if (!window.gameVault) return;
+    const unsub = window.gameVault.onSyncProgress((progress: SyncProgress) => {
+      setSyncProgressMap((prev) => ({
+        ...prev,
+        [progress.accountId]: progress
+      }));
+
+      if (progress.status === 'COMPLETED' || progress.status === 'FAILED' || progress.status === 'CANCELLED') {
+        refreshSyncSummaries();
+        setTimeout(() => {
+          setSyncProgressMap((prev) => {
+            const next = { ...prev };
+            delete next[progress.accountId];
+            return next;
+          });
+        }, 5000);
+      }
+    });
+
+    return () => {
+      unsub();
+    };
+  }, []);
+
+  const handleScanAccount = async (accountId: string) => {
+    if (!window.gameVault) return;
+    try {
+      await window.gameVault.scanAccount(accountId);
+    } catch (err) {
+      console.error('Failed to scan account:', err);
+    }
+  };
+
+  const handleScanAll = async () => {
+    if (!window.gameVault) return;
+    setIsScanningAll(true);
+    try {
+      await window.gameVault.scanAllAccounts();
+    } catch (err) {
+      console.error('Failed to scan all accounts:', err);
+    } finally {
+      setIsScanningAll(false);
+    }
+  };
+
+  const handleCancelScan = async (accountId?: string) => {
+    if (!window.gameVault) return;
+    try {
+      await window.gameVault.cancelScan(accountId);
+    } catch (err) {
+      console.error('Failed to cancel scan:', err);
+    }
+  };
 
   const handleClear = async () => {
     setClearing(true);
@@ -267,16 +349,28 @@ export const StorageScreen: React.FC<StorageScreenProps> = ({
             </p>
           </div>
 
-          <button
-            onClick={() => {
-              setErrorMessage(null);
-              setShowAddModal(true);
-            }}
-            className="btn btn-primary"
-            style={{ fontSize: '13px' }}
-          >
-            + Connect New Account
-          </button>
+          <div style={{ display: 'flex', gap: '10px' }}>
+            {activeAccounts.length > 0 && (
+              <button
+                onClick={handleScanAll}
+                disabled={isScanningAll}
+                className="btn btn-secondary"
+                style={{ fontSize: '13px' }}
+              >
+                {isScanningAll ? '⏳ Scanning All...' : '🔍 Scan All Accounts'}
+              </button>
+            )}
+            <button
+              onClick={() => {
+                setErrorMessage(null);
+                setShowAddModal(true);
+              }}
+              className="btn btn-primary"
+              style={{ fontSize: '13px' }}
+            >
+              + Connect New Account
+            </button>
+          </div>
         </div>
 
         {/* Accounts List */}
@@ -288,131 +382,203 @@ export const StorageScreen: React.FC<StorageScreenProps> = ({
               acc.quotaTotalBytes > 0
                 ? Math.min(100, Math.round((acc.quotaUsedBytes / acc.quotaTotalBytes) * 100))
                 : 0;
+            const accSummary = syncSummaryMap[acc.id];
+            const accProgress = syncProgressMap[acc.id];
+            const isScanning = accProgress && accProgress.status === 'RUNNING';
 
             return (
               <div
                 key={acc.id}
                 style={{
                   display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
+                  flexDirection: 'column',
                   padding: '16px 20px',
                   background: 'var(--bg-surface)',
                   borderRadius: 'var(--radius-sm)',
                   border: '1px solid var(--border-color)',
                   opacity: isConnected ? 1 : 0.7,
-                  gap: '20px'
+                  gap: '12px'
                 }}
               >
-                {/* Account Identity */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: '260px' }}>
-                  <div
-                    style={{
-                      width: '42px',
-                      height: '42px',
-                      borderRadius: '8px',
-                      background: 'rgba(59, 130, 246, 0.12)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      fontSize: '22px',
-                      flexShrink: 0
-                    }}
-                  >
-                    📁
-                  </div>
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
-                      <h4 style={{ fontSize: '15px', fontWeight: 700 }}>{acc.accountName}</h4>
-                      <span
-                        style={{
-                          fontSize: '10px',
-                          padding: '2px 8px',
-                          borderRadius: '4px',
-                          background: isConnected
-                            ? 'rgba(16, 185, 129, 0.15)'
-                            : 'rgba(148, 163, 184, 0.15)',
-                          color: isConnected ? 'var(--accent-green)' : 'var(--text-muted)',
-                          fontWeight: 700
-                        }}
-                      >
-                        {isConnected ? '● Connected' : '○ Disconnected'}
-                      </span>
-                    </div>
-                    <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                      {acc.accountEmail || 'No email specified'} • Google Drive
-                    </span>
-                  </div>
-                </div>
-
-                {/* Quota Bar */}
-                <div style={{ flex: 1, maxWidth: '320px' }}>
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      fontSize: '11px',
-                      marginBottom: '4px',
-                      color: 'var(--text-secondary)'
-                    }}
-                  >
-                    <span>Quota:</span>
-                    <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
-                      {formatBytes(acc.quotaUsedBytes)} / {formatBytes(acc.quotaTotalBytes)} ({accPercent}%)
-                    </span>
-                  </div>
-                  <div
-                    style={{
-                      width: '100%',
-                      height: '6px',
-                      background: 'var(--bg-main)',
-                      borderRadius: '3px',
-                      overflow: 'hidden'
-                    }}
-                  >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '20px' }}>
+                  {/* Account Identity */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px', minWidth: '260px' }}>
                     <div
                       style={{
-                        width: `${accPercent}%`,
-                        height: '100%',
-                        background: isConnected ? 'var(--accent-blue)' : 'var(--text-muted)',
-                        borderRadius: '3px'
+                        width: '42px',
+                        height: '42px',
+                        borderRadius: '8px',
+                        background: 'rgba(59, 130, 246, 0.12)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        fontSize: '22px',
+                        flexShrink: 0
                       }}
-                    />
+                    >
+                      📁
+                    </div>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+                        <h4 style={{ fontSize: '15px', fontWeight: 700 }}>{acc.accountName}</h4>
+                        <span
+                          style={{
+                            fontSize: '10px',
+                            padding: '2px 8px',
+                            borderRadius: '4px',
+                            background: isConnected
+                              ? 'rgba(16, 185, 129, 0.15)'
+                              : 'rgba(148, 163, 184, 0.15)',
+                            color: isConnected ? 'var(--accent-green)' : 'var(--text-muted)',
+                            fontWeight: 700
+                          }}
+                        >
+                          {isConnected ? '● Connected' : '○ Disconnected'}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                        <span>{acc.accountEmail || 'No email specified'} • Google Drive</span>
+                        {accSummary && (
+                          <span style={{ marginLeft: '8px' }}>
+                            • <strong>{accSummary.fileCount}</strong> files indexed
+                            {accSummary.lastSyncAt ? ` (Synced: ${new Date(accSummary.lastSyncAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})` : ' (Never scanned)'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                </div>
 
-                {/* Actions: Reconnect / Disconnect */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  {isConnected ? (
-                    <>
+                  {/* Quota Bar */}
+                  <div style={{ flex: 1, maxWidth: '280px' }}>
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        fontSize: '11px',
+                        marginBottom: '4px',
+                        color: 'var(--text-secondary)'
+                      }}
+                    >
+                      <span>Quota:</span>
+                      <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
+                        {formatBytes(acc.quotaUsedBytes)} / {formatBytes(acc.quotaTotalBytes)} ({accPercent}%)
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        width: '100%',
+                        height: '6px',
+                        background: 'var(--bg-main)',
+                        borderRadius: '3px',
+                        overflow: 'hidden'
+                      }}
+                    >
+                      <div
+                        style={{
+                          width: `${accPercent}%`,
+                          height: '100%',
+                          background: isConnected ? 'var(--accent-blue)' : 'var(--text-muted)',
+                          borderRadius: '3px'
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Actions: Scan / Reconnect / Disconnect */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {isConnected ? (
+                      <>
+                        <button
+                          onClick={() => handleScanAccount(acc.id)}
+                          disabled={isScanning || isActionLoading}
+                          className="btn btn-secondary"
+                          style={{
+                            fontSize: '12px',
+                            padding: '6px 14px',
+                            borderColor: isScanning ? 'var(--accent-blue)' : undefined
+                          }}
+                        >
+                          {isScanning ? 'Scanning...' : '🔍 Scan Library'}
+                        </button>
+                        <button
+                          onClick={() => handleReconnect(acc)}
+                          disabled={isActionLoading || isScanning}
+                          className="btn btn-secondary"
+                          style={{ fontSize: '12px', padding: '6px 14px' }}
+                        >
+                          {isActionLoading ? 'Connecting...' : 'Reconnect'}
+                        </button>
+                        <button
+                          onClick={() => handleDisconnect(acc)}
+                          disabled={isActionLoading || isScanning}
+                          className="btn btn-danger"
+                          style={{ fontSize: '12px', padding: '6px 14px' }}
+                        >
+                          Disconnect
+                        </button>
+                      </>
+                    ) : (
                       <button
                         onClick={() => handleReconnect(acc)}
                         disabled={isActionLoading}
-                        className="btn btn-secondary"
-                        style={{ fontSize: '12px', padding: '6px 14px' }}
+                        className="btn btn-primary"
+                        style={{ fontSize: '12px', padding: '6px 16px' }}
                       >
-                        {isActionLoading ? 'Connecting...' : 'Reconnect'}
+                        {isActionLoading ? 'Connecting...' : 'Connect'}
                       </button>
-                      <button
-                        onClick={() => handleDisconnect(acc)}
-                        disabled={isActionLoading}
-                        className="btn btn-danger"
-                        style={{ fontSize: '12px', padding: '6px 14px' }}
-                      >
-                        Disconnect
-                      </button>
-                    </>
-                  ) : (
-                    <button
-                      onClick={() => handleReconnect(acc)}
-                      disabled={isActionLoading}
-                      className="btn btn-primary"
-                      style={{ fontSize: '12px', padding: '6px 16px' }}
-                    >
-                      {isActionLoading ? 'Connecting...' : 'Connect'}
-                    </button>
-                  )}
+                    )}
+                  </div>
                 </div>
+
+                {/* Live Scanning Progress Banner */}
+                {isScanning && accProgress && (
+                  <div
+                    style={{
+                      padding: '10px 14px',
+                      background: 'rgba(59, 130, 246, 0.08)',
+                      borderRadius: 'var(--radius-sm)',
+                      border: '1px solid rgba(59, 130, 246, 0.3)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      fontSize: '12px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <span style={{ fontSize: '16px', animation: 'spin 2s linear infinite' }}>🔄</span>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span
+                            style={{
+                              fontSize: '10px',
+                              fontWeight: 800,
+                              background: 'var(--accent-blue)',
+                              color: '#fff',
+                              padding: '2px 6px',
+                              borderRadius: '3px'
+                            }}
+                          >
+                            {accProgress.phase}
+                          </span>
+                          <span style={{ color: 'var(--text-primary)', fontFamily: 'monospace', fontSize: '11px' }}>
+                            {accProgress.currentPath || '/'}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', marginTop: '4px' }}>
+                          Files Scanned: <strong>{accProgress.filesScanned}</strong> • Folders: <strong>{accProgress.foldersScanned}</strong> • Games Identified: <strong>{accProgress.gamesDetected}</strong>
+                        </div>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => handleCancelScan(acc.id)}
+                      className="btn btn-secondary"
+                      style={{ fontSize: '11px', padding: '4px 10px', color: 'var(--accent-red)' }}
+                    >
+                      Cancel Scan
+                    </button>
+                  </div>
+                )}
               </div>
             );
           })}

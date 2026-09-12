@@ -121,7 +121,19 @@ async function runTests() {
     throw new Error('MemoryCredentialStore.delete() failed');
   }
 
-  const dpapiStore = new DpapiCredentialStore();
+  // Verify fail-secure behavior when safeStorage is unavailable without fallback
+  let failSecureThrown = false;
+  try {
+    const strictStore = new DpapiCredentialStore({ allowInsecureFallback: false });
+    await strictStore.setTokenPayload('test-strict', testTokens);
+  } catch {
+    failSecureThrown = true;
+  }
+  if (!failSecureThrown) {
+    throw new Error('DpapiCredentialStore should fail secure when safeStorage is unavailable and allowInsecureFallback=false');
+  }
+
+  const dpapiStore = new DpapiCredentialStore({ allowInsecureFallback: true });
   await dpapiStore.setTokenPayload('test-storage-key', testTokens);
   if (!(await dpapiStore.has('test-storage-key'))) {
     throw new Error('DpapiCredentialStore.has() returned false after save');
@@ -134,7 +146,7 @@ async function runTests() {
   if (await dpapiStore.has('test-storage-key') || (await dpapiStore.getTokenPayload('test-storage-key')) !== null) {
     throw new Error('DpapiCredentialStore delete failed');
   }
-  console.log('✔ CredentialStore encryption, round-trip retrieval, and deletion validated.');
+  console.log('✔ CredentialStore encryption, fail-secure policy, round-trip retrieval, and deletion validated.');
 
   // --------------------------------------------------------------------------
   // TEST 4: OAuth PKCE Generation & RFC 7636 Conformance

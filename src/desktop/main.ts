@@ -5,9 +5,15 @@ import { logger } from '../core/logger';
 import { getDb } from '../database/connection';
 import { initializeDatabaseSchema } from '../database/schema';
 import { GamesRepository } from '../database/repositories/gamesRepository';
+import { GameFilesRepository } from '../database/repositories/gameFilesRepository';
 import { StorageAccountsRepository } from '../database/repositories/storageAccountsRepository';
 import { DownloadsRepository } from '../database/repositories/downloadsRepository';
 import { SettingsRepository } from '../database/repositories/settingsRepository';
+import { CloudFilesRepository } from '../database/repositories/cloudFilesRepository';
+import { SyncStateRepository } from '../database/repositories/syncStateRepository';
+import { CatalogIngestionService } from '../catalog/CatalogIngestionService';
+import { CloudInventoryScanner } from '../sync/CloudInventoryScanner';
+import { SyncCoordinator } from '../sync/SyncCoordinator';
 import { storageManager } from '../storage/StorageManager';
 import { cacheManager } from '../storage/CacheManager';
 import { DownloadManager } from '../downloads/DownloadManager';
@@ -75,7 +81,7 @@ async function createWindow(): Promise<BrowserWindow> {
 }
 
 async function initializeApp(): Promise<void> {
-  log.info('Starting Game Vault Foundation runtime...');
+  log.info('Starting Game Vault Phase 2B runtime...');
 
   // Initialize SQLite Database
   const db = getDb();
@@ -83,9 +89,12 @@ async function initializeApp(): Promise<void> {
 
   // Initialize Repositories
   const gamesRepo = new GamesRepository(db);
+  const gameFilesRepo = new GameFilesRepository(db);
   const accountsRepo = new StorageAccountsRepository(db);
   const downloadsRepo = new DownloadsRepository(db);
   const settingsRepo = new SettingsRepository(db);
+  const cloudFilesRepo = new CloudFilesRepository(db);
+  const syncStateRepo = new SyncStateRepository(db);
 
   // Seed Mock Data for Foundation phase
   seedInitialDataIfEmpty(gamesRepo, accountsRepo);
@@ -93,6 +102,17 @@ async function initializeApp(): Promise<void> {
   // Register existing accounts in StorageManager
   storageManager.setRepository(accountsRepo);
   storageManager.initializeAccounts(accountsRepo.getAll());
+
+  // Initialize Sync & Catalog Services
+  const catalogIngestion = new CatalogIngestionService(gamesRepo, gameFilesRepo);
+  const scanner = new CloudInventoryScanner(cloudFilesRepo);
+  const syncCoordinator = new SyncCoordinator(
+    storageManager,
+    scanner,
+    cloudFilesRepo,
+    syncStateRepo,
+    catalogIngestion
+  );
 
   // Initialize Services
   const downloadManager = new DownloadManager(downloadsRepo, gamesRepo);
@@ -105,13 +125,17 @@ async function initializeApp(): Promise<void> {
     accountsRepo,
     downloadsRepo,
     settingsRepo,
+    cloudFilesRepo,
+    syncStateRepo,
+    catalogIngestion,
+    syncCoordinator,
     storageManager,
     cacheManager,
     downloadManager,
     mainWindow
   });
 
-  log.info('Game Vault Foundation initialized successfully.');
+  log.info('Game Vault Phase 2B initialized successfully.');
 }
 
 app.whenReady().then(async () => {

@@ -64,7 +64,7 @@ export const MIGRATIONS: Migration[] = [
           filename TEXT NOT NULL,
           size_bytes INTEGER NOT NULL,
           md5_checksum TEXT,
-          status TEXT NOT NULL CHECK(status IN ('REMOTE', 'DOWNLOADING', 'CACHED_LOCAL')),
+          status TEXT NOT NULL CHECK(status IN ('REMOTE', 'DOWNLOADING', 'CACHED_LOCAL', 'MISSING')),
           local_path TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
@@ -146,6 +146,117 @@ export const MIGRATIONS: Migration[] = [
       db.exec(`
         CREATE INDEX IF NOT EXISTS idx_storage_accounts_provider_acc
         ON storage_accounts(provider_type, provider_account_id);
+      `);
+    }
+  },
+  {
+    version: 3,
+    name: '003_cloud_inventory',
+    up: (db: Database) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS cloud_files (
+          id TEXT PRIMARY KEY,
+          storage_account_id TEXT NOT NULL REFERENCES storage_accounts(id) ON DELETE CASCADE,
+          remote_file_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          extension TEXT NOT NULL,
+          mime_type TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL DEFAULT 0,
+          md5_checksum TEXT,
+          parent_remote_id TEXT,
+          remote_path TEXT NOT NULL,
+          modified_time TEXT,
+          is_folder INTEGER NOT NULL DEFAULT 0,
+          is_shortcut INTEGER NOT NULL DEFAULT 0,
+          trashed INTEGER NOT NULL DEFAULT 0,
+          classification TEXT NOT NULL DEFAULT 'UNKNOWN',
+          detected_platform TEXT,
+          classification_confidence REAL NOT NULL DEFAULT 0.0,
+          first_seen_at TEXT NOT NULL,
+          last_seen_at TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(storage_account_id, remote_file_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_cloud_files_account_parent
+        ON cloud_files(storage_account_id, parent_remote_id);
+
+        CREATE INDEX IF NOT EXISTS idx_cloud_files_account_path
+        ON cloud_files(storage_account_id, remote_path);
+
+        CREATE INDEX IF NOT EXISTS idx_cloud_files_classification
+        ON cloud_files(classification);
+      `);
+    }
+  },
+  {
+    version: 4,
+    name: '004_storage_sync_state',
+    up: (db: Database) => {
+      // Deduplicate any rows on (provider_type, provider_account_id) before unique index
+      db.exec(`
+        DELETE FROM storage_accounts
+        WHERE rowid NOT IN (
+          SELECT MIN(rowid)
+          FROM storage_accounts
+          GROUP BY provider_type, provider_account_id
+        );
+      `);
+
+      db.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_storage_accounts_provider_unique
+        ON storage_accounts(provider_type, provider_account_id);
+
+        CREATE TABLE IF NOT EXISTS storage_sync_state (
+          storage_account_id TEXT PRIMARY KEY REFERENCES storage_accounts(id) ON DELETE CASCADE,
+          initial_scan_completed INTEGER NOT NULL DEFAULT 0,
+          start_page_token TEXT,
+          next_change_page_token TEXT,
+          last_full_scan_at TEXT,
+          last_incremental_sync_at TEXT,
+          last_error TEXT,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS sync_runs (
+          id TEXT PRIMARY KEY,
+          storage_account_id TEXT NOT NULL REFERENCES storage_accounts(id) ON DELETE CASCADE,
+          started_at TEXT NOT NULL,
+          finished_at TEXT,
+          status TEXT NOT NULL CHECK(status IN ('STARTED', 'RUNNING', 'COMPLETED', 'CANCELLED', 'FAILED')),
+          folders_scanned INTEGER NOT NULL DEFAULT 0,
+          files_scanned INTEGER NOT NULL DEFAULT 0,
+          games_detected INTEGER NOT NULL DEFAULT 0,
+          error_message TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_sync_runs_account
+        ON sync_runs(storage_account_id);
+
+        CREATE INDEX IF NOT EXISTS idx_sync_runs_status
+        ON sync_runs(status);
+
+        -- Upgrade game_files status CHECK constraint to support 'MISSING'
+        CREATE TABLE IF NOT EXISTS game_files_new (
+          id TEXT PRIMARY KEY,
+          game_id TEXT NOT NULL REFERENCES games(id) ON DELETE CASCADE,
+          storage_account_id TEXT NOT NULL REFERENCES storage_accounts(id) ON DELETE RESTRICT,
+          remote_file_id TEXT NOT NULL,
+          remote_path TEXT NOT NULL,
+          filename TEXT NOT NULL,
+          size_bytes INTEGER NOT NULL,
+          md5_checksum TEXT,
+          status TEXT NOT NULL CHECK(status IN ('REMOTE', 'DOWNLOADING', 'CACHED_LOCAL', 'MISSING')),
+          local_path TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+        INSERT OR IGNORE INTO game_files_new SELECT * FROM game_files;
+        DROP TABLE game_files;
+        ALTER TABLE game_files_new RENAME TO game_files;
+        CREATE INDEX IF NOT EXISTS idx_game_files_game_id ON game_files(game_id);
+        CREATE INDEX IF NOT EXISTS idx_game_files_account_id ON game_files(storage_account_id);
       `);
     }
   }

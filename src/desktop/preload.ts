@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS } from './ipc/channels';
-import { Game, GameState, StorageAccount, StorageProviderType, StorageQuotaSummary, DownloadItem } from '../core/types';
+import { Game, GameState, StorageAccount, StorageProviderType, StorageQuotaSummary, DownloadItem, SyncRun, SyncProgress, StorageSyncState } from '../core/types';
 import { RemoteFile } from '../providers/types';
 
 const api = {
@@ -23,6 +23,40 @@ const api = {
   clearCache: (): Promise<StorageQuotaSummary> => ipcRenderer.invoke(IPC_CHANNELS.STORAGE_CLEAR_CACHE),
   listStorageFiles: (accountId: string, folderId?: string): Promise<RemoteFile[]> =>
     ipcRenderer.invoke(IPC_CHANNELS.STORAGE_LIST_FILES, accountId, folderId),
+
+  // Cloud Inventory & Sync
+  scanAccount: (accountId: string): Promise<{ success: boolean; latestRun: SyncRun | null }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SYNC_SCAN_ACCOUNT, accountId),
+  scanAllAccounts: (): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SYNC_SCAN_ALL),
+  cancelScan: (accountId?: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.SYNC_CANCEL, accountId),
+  getSyncStatus: (accountId: string): Promise<{
+    syncState: StorageSyncState | null;
+    activeProgress: SyncProgress | null;
+    latestRun: SyncRun | null;
+  }> => ipcRenderer.invoke(IPC_CHANNELS.SYNC_GET_STATUS, accountId),
+  getSyncSummary: (): Promise<{
+    totalFiles: number;
+    totalGames: number;
+    accounts: Array<{
+      accountId: string;
+      fileCount: number;
+      folderCount: number;
+      totalCount: number;
+      lastSyncAt: string | null;
+      status: string;
+    }>;
+  }> => ipcRenderer.invoke(IPC_CHANNELS.SYNC_GET_SUMMARY),
+  onSyncProgress: (callback: (progress: SyncProgress) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, progress: SyncProgress) => {
+      callback(progress);
+    };
+    ipcRenderer.on(IPC_CHANNELS.SYNC_PROGRESS_EVENT, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.SYNC_PROGRESS_EVENT, handler);
+    };
+  },
 
   // Downloads
   getAllDownloads: (): Promise<DownloadItem[]> => ipcRenderer.invoke(IPC_CHANNELS.DOWNLOADS_GET_ALL),

@@ -58,6 +58,12 @@ export class GamesRepository {
     return row ? mapRowToGame(row) : null;
   }
 
+  public getBySlug(slug: string): Game | null {
+    const stmt = this.db.prepare('SELECT * FROM games WHERE slug = ?');
+    const row = stmt.get(slug) as GameRow | undefined;
+    return row ? mapRowToGame(row) : null;
+  }
+
   public getByState(state: GameState): Game[] {
     const stmt = this.db.prepare('SELECT * FROM games WHERE state = ? ORDER BY title ASC');
     const rows = stmt.all(state) as GameRow[];
@@ -127,6 +133,15 @@ export class GamesRepository {
       WHERE id = ?
     `);
     stmt.run(state, installedPath ?? null, new Date().toISOString(), id);
+  }
+
+  public updatePlayTime(id: string, playTimeSeconds: number, lastPlayedAt?: string): void {
+    const stmt = this.db.prepare(`
+      UPDATE games 
+      SET play_time_seconds = ?, last_played_at = COALESCE(?, last_played_at), updated_at = ?
+      WHERE id = ?
+    `);
+    stmt.run(playTimeSeconds, lastPlayedAt ?? null, new Date().toISOString(), id);
   }
 
   public delete(id: string): boolean {

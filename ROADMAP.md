@@ -3,7 +3,7 @@
 This roadmap tracks the development lifecycle of Game Vault. Each phase builds upon the previous, keeping strict architectural separation and test-driven verification.
 
 > [!NOTE]
-> Currently Completed: **Phase 1 (Foundation)** & **Phase 2A (Google Authentication & Multi-Account Storage Foundation)**. Subsequent phases are documented for planning purposes and must not be implemented ahead of their scheduled milestone.
+> Currently Completed: **Phase 1 (Foundation)**, **Phase 2A (Google Authentication & Multi-Account Storage Foundation)**, and **Phase 2B (Cloud Game Scanning & Catalog Ingestion)**. Subsequent phases are documented for planning purposes and must not be implemented ahead of their scheduled milestone.
 
 ---
 
@@ -50,11 +50,17 @@ This roadmap tracks the development lifecycle of Game Vault. Each phase builds u
 
 ---
 
-## 🔮 Phase 2B: Cloud Game Scanning & Catalog Ingestion (UPCOMING ⏳)
-- [ ] Google Drive recursive folder scanner (`files.list` with mimeType filtering for ISO, ROM, EXE, ZIP, 7Z, RAR, NSP, PKG).
-- [ ] Folder-to-Game heuristic indexing (identifying game names and platforms from folder hierarchy).
-- [ ] Background sync worker updating SQLite catalog with delta changes.
-- [ ] Multi-account inventory aggregation (browsing games across all connected accounts unified in the library).
+## 📍 Phase 2B: Cloud Game Scanning & Catalog Ingestion (COMPLETED ✅)
+- [x] Google Drive recursive folder scanner (`CloudInventoryScanner` using BFS queue, batch transactions, pagination up to 1000 items).
+- [x] Rate limiting resilience: exponential backoff with jitter for 429/403/5xx errors (`fetchWithRetry`).
+- [x] Google Drive Changes API incremental delta synchronization (`getStartPageToken`, `listChanges`).
+- [x] Contextual heuristic file classification (`FileClassifier`) with confidence scoring (`HIGH >= 0.75`, `MEDIUM`, `LOW`).
+- [x] Game candidate resolver (`GameCandidateResolver`): title normalization, multi-track `.bin` / `.cue` grouping, multi-disc detection, collision-proof slugs.
+- [x] Catalog ingestion engine (`CatalogIngestionService`): atomic upserts to `games` and `game_files`, non-destructive `MISSING` status handling.
+- [x] Multi-account inventory aggregation (browsing games across all connected accounts unified in the library).
+- [x] Full UI integration: per-account scanning controls, "Scan All Accounts", real-time progress bar, cancellation button, and fallback cover artwork.
+- [x] Migrations `003_cloud_inventory` and `004_storage_sync_state` with 100% test coverage (25 automated scenarios).
+- [x] Architecture documentation in `docs/CLOUD_SCANNING.md`.
 
 ---
 

@@ -12,6 +12,8 @@
     "typecheck": "tsc --noEmit",
     "start": "electron dist/desktop/main.js",
     "test:db": "node scripts/run-test-db.mjs",
+    "test:phase2b": "node scripts/run-test-phase2b.mjs",
+    "test": "npm run test:db && npm run test:phase2b",
     "lint": "eslint .",
     "postinstall": "electron-rebuild -f -w better-sqlite3"
   },

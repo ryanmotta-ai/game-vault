@@ -7,10 +7,14 @@ import {
   FileMetadata,
   RemoteFile,
   StorageProviderConfig,
-  StorageQuota
+  StorageQuota,
+  ListFilesOptions,
+  PaginatedFilesResult,
+  ChangeListResult,
+  RemoteChange
 } from '../types';
 import { StorageProviderType } from '../../core/types';
-import { NotImplementedError, GoogleApiError, AuthError } from '../../core/errors/AppError';
+import { NotImplementedError, GoogleApiError, AuthError, RateLimitExceededError } from '../../core/errors/AppError';
 import { Logger } from '../../core/logger';
 import { CredentialStore, getCredentialStore } from '../../core/security/CredentialStore';
 import { googleOAuthService, GoogleOAuthService } from './GoogleOAuthService';
@@ -209,34 +213,98 @@ export class GoogleDriveProvider implements StorageProvider {
     };
   }
 
-  public async listFiles(folderId?: string): Promise<RemoteFile[]> {
+  private async fetchWithRetry(
+    url: string,
+    init?: RequestInit,
+    maxRetries = 4
+  ): Promise<Response> {
+    let attempt = 0;
+    while (attempt <= maxRetries) {
+      try {
+        const response = await fetch(url, init);
+
+        if (response.ok) {
+          return response;
+        }
+
+        const isRateLimit =
+          response.status === 429 ||
+          response.status === 403; // Google rate limits are often HTTP 403 with userRateLimitExceeded
+        const isServerTransient = response.status >= 500 && response.status < 600;
+
+        if ((isRateLimit || isServerTransient) && attempt < maxRetries) {
+          attempt++;
+          const retryAfterHeader = response.headers.get('retry-after');
+          const delayMs = retryAfterHeader
+            ? parseInt(retryAfterHeader, 10) * 1000
+            : Math.min(10000, Math.pow(2, attempt) * 500 + Math.random() * 300);
+
+          this.logger.warn(
+            `Google API returned HTTP ${response.status} (attempt ${attempt}/${maxRetries}). Retrying in ${Math.round(delayMs)}ms...`
+          );
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+
+        const text = await response.text();
+        if (response.status === 429) {
+          throw new RateLimitExceededError(`Google Drive rate limit exceeded: ${text}`);
+        }
+        throw new GoogleApiError(`API request failed: ${text}`, response.status);
+      } catch (err) {
+        if (err instanceof GoogleApiError || err instanceof RateLimitExceededError) {
+          throw err;
+        }
+        // Network / connection drop retry
+        if (attempt < maxRetries) {
+          attempt++;
+          const delayMs = Math.pow(2, attempt) * 500 + Math.random() * 300;
+          this.logger.warn(`Network error during Google API call (attempt ${attempt}/${maxRetries}). Retrying in ${Math.round(delayMs)}ms...`, err);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+          continue;
+        }
+        throw new GoogleApiError(`Network error communicating with Google API: ${err instanceof Error ? err.message : String(err)}`, 503);
+      }
+    }
+
+    throw new GoogleApiError('Max retries exceeded communicating with Google Drive API.', 504);
+  }
+
+  public async listPaginatedFiles(
+    folderId?: string,
+    options?: ListFilesOptions
+  ): Promise<PaginatedFilesResult> {
     const token = await this.getValidAccessToken();
 
-    let query = 'trashed = false';
-    if (folderId) {
-      query += ` and '${folderId}' in parents`;
+    let query = options?.query;
+    if (!query) {
+      query = 'trashed = false';
+      if (folderId) {
+        query += ` and '${folderId}' in parents`;
+      }
     }
 
     const url = new URL('https://www.googleapis.com/drive/v3/files');
-    url.searchParams.set('pageSize', '50');
+    const pageSize = Math.min(1000, Math.max(1, options?.pageSize || 1000));
+    url.searchParams.set('pageSize', pageSize.toString());
     url.searchParams.set(
       'fields',
       'nextPageToken,files(id,name,mimeType,size,md5Checksum,modifiedTime,parents,trashed)'
     );
     url.searchParams.set('q', query);
 
-    const response = await fetch(url.toString(), {
+    if (options?.pageToken) {
+      url.searchParams.set('pageToken', options.pageToken);
+    }
+
+    const response = await this.fetchWithRetry(url.toString(), {
       headers: {
         Authorization: `Bearer ${token}`
       }
     });
 
-    if (!response.ok) {
-      const text = await response.text();
-      throw new GoogleApiError(`Failed to list files: ${text}`, response.status);
-    }
-
     const data = (await response.json()) as {
+      nextPageToken?: string;
       files?: Array<{
         id: string;
         name: string;
@@ -245,10 +313,11 @@ export class GoogleDriveProvider implements StorageProvider {
         md5Checksum?: string;
         modifiedTime?: string;
         parents?: string[];
+        trashed?: boolean;
       }>;
     };
 
-    return (data.files || []).map((file) => ({
+    const files: RemoteFile[] = (data.files || []).map((file) => ({
       id: file.id,
       name: file.name,
       mimeType: file.mimeType,
@@ -256,8 +325,116 @@ export class GoogleDriveProvider implements StorageProvider {
       md5Checksum: file.md5Checksum,
       modifiedTime: file.modifiedTime,
       isFolder: file.mimeType === 'application/vnd.google-apps.folder',
-      parentFolderId: file.parents?.[0]
+      parentFolderId: file.parents?.[0],
+      trashed: Boolean(file.trashed)
     }));
+
+    return {
+      files,
+      nextPageToken: data.nextPageToken
+    };
+  }
+
+  public async listFiles(folderId?: string, options?: ListFilesOptions): Promise<RemoteFile[]> {
+    if (options?.pageToken) {
+      const pageResult = await this.listPaginatedFiles(folderId, options);
+      return pageResult.files;
+    }
+
+    // Full multi-page iteration
+    const allFiles: RemoteFile[] = [];
+    let currentToken: string | undefined = undefined;
+
+    do {
+      const pageResult = await this.listPaginatedFiles(folderId, {
+        ...options,
+        pageToken: currentToken
+      });
+      allFiles.push(...pageResult.files);
+      currentToken = pageResult.nextPageToken;
+    } while (currentToken);
+
+    return allFiles;
+  }
+
+  public async getStartPageToken(): Promise<string> {
+    const token = await this.getValidAccessToken();
+    const url = 'https://www.googleapis.com/drive/v3/changes/startPageToken';
+
+    const response = await this.fetchWithRetry(url, {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    const data = (await response.json()) as { startPageToken?: string };
+    if (!data.startPageToken) {
+      throw new GoogleApiError('Failed to retrieve startPageToken from Google Drive API.');
+    }
+    return data.startPageToken;
+  }
+
+  public async listChanges(pageToken: string): Promise<ChangeListResult> {
+    const token = await this.getValidAccessToken();
+    const url = new URL('https://www.googleapis.com/drive/v3/changes');
+    url.searchParams.set('pageToken', pageToken);
+    url.searchParams.set('pageSize', '1000');
+    url.searchParams.set('includeRemoved', 'true');
+    url.searchParams.set(
+      'fields',
+      'nextPageToken,newStartPageToken,changes(fileId,removed,time,file(id,name,mimeType,size,md5Checksum,modifiedTime,parents,trashed))'
+    );
+
+    const response = await this.fetchWithRetry(url.toString(), {
+      headers: {
+        Authorization: `Bearer ${token}`
+      }
+    });
+
+    const data = (await response.json()) as {
+      nextPageToken?: string;
+      newStartPageToken?: string;
+      changes?: Array<{
+        fileId: string;
+        removed: boolean;
+        time?: string;
+        file?: {
+          id: string;
+          name: string;
+          mimeType: string;
+          size?: string;
+          md5Checksum?: string;
+          modifiedTime?: string;
+          parents?: string[];
+          trashed?: boolean;
+        };
+      }>;
+    };
+
+    const changes: RemoteChange[] = (data.changes || []).map((ch) => ({
+      fileId: ch.fileId,
+      removed: ch.removed || Boolean(ch.file?.trashed),
+      time: ch.time,
+      file: ch.file
+        ? {
+            id: ch.file.id,
+            name: ch.file.name,
+            mimeType: ch.file.mimeType,
+            sizeBytes: ch.file.size ? parseInt(ch.file.size, 10) : 0,
+            md5Checksum: ch.file.md5Checksum,
+            modifiedTime: ch.file.modifiedTime,
+            isFolder: ch.file.mimeType === 'application/vnd.google-apps.folder',
+            parentFolderId: ch.file.parents?.[0],
+            trashed: Boolean(ch.file.trashed)
+          }
+        : undefined
+    }));
+
+    return {
+      changes,
+      nextPageToken: data.nextPageToken,
+      newStartPageToken: data.newStartPageToken
+    };
   }
 
   public async getFile(fileId: string): Promise<RemoteFile> {
