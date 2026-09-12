@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import { IPC_CHANNELS } from './ipc/channels';
 import { Game, GameState, StorageAccount, StorageProviderType, StorageQuotaSummary, DownloadItem } from '../core/types';
+import { RemoteFile } from '../providers/types';
 
 const api = {
   // Games
@@ -10,12 +11,18 @@ const api = {
   updateGameState: (id: string, state: GameState, installedPath?: string): Promise<Game> =>
     ipcRenderer.invoke(IPC_CHANNELS.GAMES_UPDATE_STATE, id, state, installedPath),
 
-  // Storage
+  // Storage & Multi-Account
   getStorageAccounts: (): Promise<StorageAccount[]> => ipcRenderer.invoke(IPC_CHANNELS.STORAGE_GET_ACCOUNTS),
-  addStorageAccount: (data: { name: string; type: StorageProviderType; email?: string }): Promise<StorageAccount> =>
-    ipcRenderer.invoke(IPC_CHANNELS.STORAGE_ADD_ACCOUNT, data),
+  connectStorageAccount: (data: { type: StorageProviderType; name?: string }): Promise<StorageAccount> =>
+    ipcRenderer.invoke(IPC_CHANNELS.STORAGE_CONNECT_ACCOUNT, data),
+  disconnectStorageAccount: (accountId: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.STORAGE_DISCONNECT_ACCOUNT, accountId),
+  reconnectStorageAccount: (accountId: string): Promise<StorageAccount> =>
+    ipcRenderer.invoke(IPC_CHANNELS.STORAGE_RECONNECT_ACCOUNT, accountId),
   getQuotaSummary: (): Promise<StorageQuotaSummary> => ipcRenderer.invoke(IPC_CHANNELS.STORAGE_GET_QUOTA_SUMMARY),
   clearCache: (): Promise<StorageQuotaSummary> => ipcRenderer.invoke(IPC_CHANNELS.STORAGE_CLEAR_CACHE),
+  listStorageFiles: (accountId: string, folderId?: string): Promise<RemoteFile[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.STORAGE_LIST_FILES, accountId, folderId),
 
   // Downloads
   getAllDownloads: (): Promise<DownloadItem[]> => ipcRenderer.invoke(IPC_CHANNELS.DOWNLOADS_GET_ALL),

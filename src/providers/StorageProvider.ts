@@ -31,6 +31,11 @@ export interface StorageProvider {
   isConnected(): Promise<boolean>;
 
   /**
+   * Retrieves profile information for the connected account.
+   */
+  getAccountInfo?(): Promise<{ email?: string; name?: string; picture?: string }>;
+
+  /**
    * Lists files located in a folder, or from the root folder if not specified.
    */
   listFiles(folderId?: string): Promise<RemoteFile[]>;

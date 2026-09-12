@@ -12,13 +12,16 @@ export function seedInitialDataIfEmpty(gamesRepo: GamesRepository, accountsRepo:
     const primaryAccount: StorageAccount = {
       id: 'gdrive-primary',
       providerType: 'google_drive',
+      providerAccountId: 'seed-gdrive-primary',
       accountName: 'Google Drive (Primary)',
       accountEmail: 'gamer.vault@gmail.com',
+      credentialKey: 'gdrive:seed-primary',
       status: 'ACTIVE',
       quotaTotalBytes: 2 * 1024 * 1024 * 1024 * 1024, // 2 TB
       quotaUsedBytes: 247 * 1024 * 1024 * 1024, // 247 GB
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      lastAuthenticatedAt: new Date().toISOString()
     };
     accountsRepo.upsert(primaryAccount);
   }

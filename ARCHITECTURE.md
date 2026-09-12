@@ -107,7 +107,7 @@ src/
 
 ---
 
-## 3. StorageProvider Abstraction
+## 3. StorageProvider Abstraction & Multi-Account Architecture
 
 To ensure Game Vault is never tightly coupled to a single storage provider, all remote backends implement the `StorageProvider` interface:
 
@@ -120,6 +120,7 @@ export interface StorageProvider {
   authenticate(credentials?: AuthCredentials): Promise<AuthResult>;
   disconnect(): Promise<void>;
   isConnected(): Promise<boolean>;
+  getAccountInfo?(): Promise<{ email?: string; displayName?: string; picture?: string }>;
   listFiles(folderId?: string): Promise<RemoteFile[]>;
   getFile(fileId: string): Promise<RemoteFile>;
   download(
@@ -132,8 +133,11 @@ export interface StorageProvider {
 }
 ```
 
-### Provider Registration
-New providers are registered through `ProviderFactory.register(type, Constructor)`. The UI and Core interact exclusively with `StorageManager`, completely oblivious to provider-specific SDKs or HTTP mechanics.
+### Multi-Account Registry
+Unlike typical desktop tools that support only one connected cloud account at a time, `StorageManager` maintains an internal `Map<string, StorageProvider>` keyed by account ID. This enables:
+- Connecting multiple independent accounts of the same provider (e.g., "Ryan Principal 5 TB" and "Ryan Archive 5 TB").
+- Independent authentication state, token refresh cycles, and isolated disconnect operations.
+- Dynamic quota aggregation across all active connected accounts without cross-account contamination.
 
 ---
 
@@ -151,24 +155,31 @@ stateDiagram-v2
 ```
 
 1. **`CLOUD`**: Game file exists exclusively on the user's remote storage. Metadata, cover art, and size are known and displayed.
-2. **`DOWNLOADING`**: Game is actively transferring into the local SSD/HDD cache directory. Progress bar and speed are tracked.
+2. **`DOWNLOADING`**: Game is actively transfering into the local SSD/HDD cache directory. Progress bar and speed are tracked.
 3. **`READY`**: Game is verified, extracted, and present on local disk. Instant "Play" action is enabled.
 
 ---
 
-## 5. SQLite Data Schema
+## 5. SQLite Data Schema & Versioned Migrations
 
-Game Vault uses an embedded SQLite database configured in **WAL (Write-Ahead Logging)** mode with active foreign key constraints:
+Game Vault uses an embedded SQLite database configured in **WAL (Write-Ahead Logging)** mode with active foreign key constraints and a versioned **MigrationRunner**:
+
+### `schema_migrations`
+Tracks applied schema migrations to guarantee non-destructive, idempotent database evolution.
+- `version` (INTEGER PRIMARY KEY)
+- `name` (TEXT)
+- `applied_at` (TEXT)
 
 ### 1. `games`
 Core catalog of indexed titles.
 - Primary Key: `id` (UUID)
 - Fields: `title`, `slug`, `description`, `cover_url`, `banner_url`, `platform`, `release_year`, `developer`, `publisher`, `state` (`CLOUD` | `DOWNLOADING` | `READY`), `size_bytes`, `installed_path`, `play_time_seconds`, `last_played_at`, `created_at`, `updated_at`.
 
-### 2. `storage_accounts`
+### 2. `storage_accounts` (Updated in Migration 002)
 Connected cloud and network storage accounts.
 - Primary Key: `id`
-- Fields: `provider_type`, `account_name`, `account_email`, `status` (`ACTIVE` | `DISCONNECTED` | `ERROR` | `REVOKED`), `quota_total_bytes`, `quota_used_bytes`, `auth_config_secure_ref`, `last_synced_at`, `created_at`, `updated_at`.
+- Fields: `provider_type`, `provider_account_id`, `account_name`, `account_email`, `credential_key`, `status` (`ACTIVE` | `DISCONNECTED` | `ERROR` | `REVOKED`), `quota_total_bytes`, `quota_used_bytes`, `last_synced_at`, `last_authenticated_at`, `created_at`, `updated_at`.
+- Indices: `idx_storage_accounts_provider_acc` on `(provider_type, provider_account_id)`.
 
 ### 3. `game_files`
 Remote and local binary files associated with games.
@@ -194,10 +205,62 @@ Persistent application key-value configuration.
 
 ---
 
-## 6. Security Model
+## 6. Security & Authentication Architecture
 
-1. **Context Isolation**: `contextIsolation: true` in all BrowserWindow instances.
-2. **Sandbox Protection**: `sandbox: true` prevents unauthorized system calls from renderers.
-3. **No Node Integration**: `nodeIntegration: false`. The renderer cannot require modules or touch file systems directly.
-4. **Strict CSP**: Restricts script execution to local bundles, disallows `eval()`, and restricts image and network origins.
-5. **No Plaintext Secrets**: OAuth credentials and user tokens are never committed or stored in plaintext database fields; references point to the OS-encrypted credential store.
+Game Vault adheres strictly to modern native application security standards:
+
+```mermaid
+flowchart LR
+    subgraph Browser ["User's Default Browser"]
+        GoogleAuth["Google Accounts Consent"]
+    end
+
+    subgraph Loopback ["Ephemeral HTTP Server"]
+        Callback["http://127.0.0.1:<port>/oauth2callback"]
+    end
+
+    subgraph Main ["Electron Main Process"]
+        PKCE["PKCE Verifier & State"]
+        TokenExchange["Token Exchange (Drive API)"]
+        SafeStorage["Windows DPAPI (safeStorage)"]
+    end
+
+    subgraph Renderer ["Renderer UI (React)"]
+        UI["Accounts List (Public info & Quota only)"]
+    end
+
+    UI -->|"connectStorageAccount(name)"| Main
+    Main -->|"Generate S256 Challenge & State"| PKCE
+    Main -->|"shell.openExternal"| GoogleAuth
+    GoogleAuth -->|"Redirect with Auth Code"| Callback
+    Callback -->|"Validate State & Extract Code"| TokenExchange
+    TokenExchange -->|"Encrypt Tokens"| SafeStorage
+    Main -->|"Return sanitized StorageAccount"| UI
+```
+
+1. **Native Loopback OAuth 2.0 (RFC 8252)**:
+   - Uses an ephemeral local HTTP server bound strictly to `127.0.0.1`.
+   - Authorization opens directly in the user's OS browser via `shell.openExternal`.
+   - Never uses embedded WebViews, avoiding credential snooping or session hijacking.
+
+2. **PKCE Enforcement (RFC 7636)**:
+   - High-entropy cryptographically random `code_verifier` (256-bit).
+   - SHA-256 base64url challenge (`S256`) sent to authorization server.
+   - Mitigates authorization code injection attacks on desktop clients.
+
+3. **OS-Level Credential Protection (DPAPI)**:
+   - OAuth access tokens and refresh tokens are managed via `CredentialStore`.
+   - Implemented using Windows DPAPI via Electron's `safeStorage.encryptString()` and `decryptString()`.
+   - Automatic AES-256-GCM hardware/user-bound key derivation fallback for headless/CI environments.
+   - Credentials are **never** stored in SQLite and are **never** exposed to the renderer process.
+
+4. **Least-Privilege Scopes**:
+   - `drive.readonly` (Read-only access to files and metadata).
+   - `userinfo.profile` (Display name and avatar).
+   - `userinfo.email` (Account identification).
+   - Game Vault has zero permission to delete or overwrite user cloud files.
+
+5. **Strict Process Isolation**:
+   - `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`.
+   - CSP strictly configured in `src/desktop/security.ts`.
+   - IPC channels validate input arguments before handling.

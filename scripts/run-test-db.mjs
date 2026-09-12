@@ -14,7 +14,20 @@ async function run() {
     bundle: true,
     platform: 'node',
     target: 'node20',
-    external: ['better-sqlite3']
+    external: ['better-sqlite3', 'electron'],
+    alias: {
+      '@': path.resolve(rootDir, 'src'),
+      '@desktop': path.resolve(rootDir, 'src/desktop'),
+      '@ui': path.resolve(rootDir, 'src/ui'),
+      '@core': path.resolve(rootDir, 'src/core'),
+      '@providers': path.resolve(rootDir, 'src/providers'),
+      '@storage': path.resolve(rootDir, 'src/storage'),
+      '@database': path.resolve(rootDir, 'src/database'),
+      '@downloads': path.resolve(rootDir, 'src/downloads'),
+      '@launchers': path.resolve(rootDir, 'src/launchers'),
+      '@emulators': path.resolve(rootDir, 'src/emulators'),
+      '@metadata': path.resolve(rootDir, 'src/metadata')
+    }
   });
 
   console.log('[test-db] Executing with Electron runtime...');

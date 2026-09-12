@@ -7,9 +7,12 @@ export const IPC_CHANNELS = {
 
   // Storage & Accounts
   STORAGE_GET_ACCOUNTS: 'storage:getAccounts',
-  STORAGE_ADD_ACCOUNT: 'storage:addAccount',
+  STORAGE_CONNECT_ACCOUNT: 'storage:connectAccount',
+  STORAGE_DISCONNECT_ACCOUNT: 'storage:disconnectAccount',
+  STORAGE_RECONNECT_ACCOUNT: 'storage:reconnectAccount',
   STORAGE_GET_QUOTA_SUMMARY: 'storage:getQuotaSummary',
   STORAGE_CLEAR_CACHE: 'storage:clearCache',
+  STORAGE_LIST_FILES: 'storage:listFiles',
 
   // Downloads
   DOWNLOADS_GET_ALL: 'downloads:getAll',

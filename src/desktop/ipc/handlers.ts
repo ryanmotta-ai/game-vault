@@ -7,9 +7,9 @@ import { SettingsRepository } from '../../database/repositories/settingsReposito
 import { StorageManager } from '../../storage/StorageManager';
 import { CacheManager } from '../../storage/CacheManager';
 import { DownloadManager } from '../../downloads/DownloadManager';
-import { GameState, StorageAccount, StorageProviderType } from '../../core/types';
+import { GameState, StorageProviderType } from '../../core/types';
 import { logger } from '../../core/logger';
-import { AppError } from '../../core/errors/AppError';
+import { AppError, ValidationError } from '../../core/errors/AppError';
 
 export interface IpcContext {
   gamesRepo: GamesRepository;
@@ -72,21 +72,26 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     return ctx.accountsRepo.getAll();
   });
 
-  wrapHandler(IPC_CHANNELS.STORAGE_ADD_ACCOUNT, (accountData: { name: string; type: StorageProviderType; email?: string }) => {
-    const account: StorageAccount = {
-      id: `acc-${Date.now()}`,
-      providerType: accountData.type,
-      accountName: accountData.name,
-      accountEmail: accountData.email,
-      status: 'ACTIVE',
-      quotaTotalBytes: 15 * 1024 * 1024 * 1024, // 15 GB
-      quotaUsedBytes: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-    ctx.accountsRepo.upsert(account);
-    ctx.storageManager.registerProvider(account);
-    return account;
+  wrapHandler(IPC_CHANNELS.STORAGE_CONNECT_ACCOUNT, async (accountData: { name?: string; type: StorageProviderType }) => {
+    if (!accountData || !accountData.type) {
+      throw new ValidationError('Storage provider type is required.');
+    }
+    return await ctx.storageManager.connectAccount(accountData.type, accountData.name);
+  });
+
+  wrapHandler(IPC_CHANNELS.STORAGE_DISCONNECT_ACCOUNT, async (accountId: string) => {
+    if (!accountId || typeof accountId !== 'string') {
+      throw new ValidationError('Valid account ID is required.');
+    }
+    await ctx.storageManager.disconnectAccount(accountId);
+    return { success: true };
+  });
+
+  wrapHandler(IPC_CHANNELS.STORAGE_RECONNECT_ACCOUNT, async (accountId: string) => {
+    if (!accountId || typeof accountId !== 'string') {
+      throw new ValidationError('Valid account ID is required.');
+    }
+    return await ctx.storageManager.reconnectAccount(accountId);
   });
 
   wrapHandler(IPC_CHANNELS.STORAGE_GET_QUOTA_SUMMARY, async () => {
@@ -98,6 +103,14 @@ export function registerIpcHandlers(ctx: IpcContext): void {
     ctx.cacheManager.clearCache();
     const accounts = ctx.accountsRepo.getAll();
     return ctx.storageManager.getQuotaSummary(accounts);
+  });
+
+  wrapHandler(IPC_CHANNELS.STORAGE_LIST_FILES, async (accountId: string, folderId?: string) => {
+    if (!accountId || typeof accountId !== 'string') {
+      throw new ValidationError('Valid account ID is required.');
+    }
+    const provider = ctx.storageManager.getProvider(accountId);
+    return await provider.listFiles(folderId);
   });
 
   // --- Downloads Handlers ---

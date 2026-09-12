@@ -91,14 +91,8 @@ async function initializeApp(): Promise<void> {
   seedInitialDataIfEmpty(gamesRepo, accountsRepo);
 
   // Register existing accounts in StorageManager
-  const accounts = accountsRepo.getAll();
-  for (const acc of accounts) {
-    try {
-      storageManager.registerProvider(acc);
-    } catch (err) {
-      log.warn(`Could not register provider for account ${acc.id}:`, err);
-    }
-  }
+  storageManager.setRepository(accountsRepo);
+  storageManager.initializeAccounts(accountsRepo.getAll());
 
   // Initialize Services
   const downloadManager = new DownloadManager(downloadsRepo, gamesRepo);

@@ -3,7 +3,7 @@
 This roadmap tracks the development lifecycle of Game Vault. Each phase builds upon the previous, keeping strict architectural separation and test-driven verification.
 
 > [!NOTE]
-> Currently Completed Phase: **Phase 1 (Foundation)**. Subsequent phases are documented for planning purposes and must not be implemented ahead of their scheduled milestone.
+> Currently Completed: **Phase 1 (Foundation)** & **Phase 2A (Google Authentication & Multi-Account Storage Foundation)**. Subsequent phases are documented for planning purposes and must not be implemented ahead of their scheduled milestone.
 
 ---
 
@@ -36,12 +36,25 @@ This roadmap tracks the development lifecycle of Game Vault. Each phase builds u
 
 ---
 
-## 🔮 Phase 2: Google Drive Authentication & Cloud Scanning
-- [ ] Implement OAuth2 loopback authentication flow (RFC 8252) for Google Drive in Electron Main.
-- [ ] Secure OS Keychain credential persistence (Windows Credential Manager / DPAPI) — zero plaintext storage.
+## 📍 Phase 2A: Google Authentication & Multi-Account Storage Foundation (COMPLETED ✅)
+- [x] Native OAuth 2.0 PKCE loopback authentication flow ([RFC 8252](https://tools.ietf.org/html/rfc8252) + [RFC 7636](https://tools.ietf.org/html/rfc7636)) for Google Drive in Electron Main.
+- [x] Ephemeral loopback HTTP server with CSRF state validation, browser launch via `shell.openExternal`, and authorization code exchange.
+- [x] Secure OS Keychain credential persistence (`CredentialStore` using Windows DPAPI via Electron `safeStorage` with AES-256-GCM fallback).
+- [x] Multi-account architecture: connect, disconnect, and reconnect multiple independent Google accounts concurrently.
+- [x] Non-destructive database migration runner (`MigrationRunner` + `schema_migrations`) applying `001_initial_schema` and `002_storage_accounts_v2`.
+- [x] Updated `StorageAccountsRepository` with `provider_account_id`, `credential_key`, and `last_authenticated_at`.
+- [x] Google Drive v3 client integration for account profile and live quota retrieval.
+- [x] Dynamic storage quota aggregation across all active accounts in `StorageManager`.
+- [x] Zero token leakage in logs (`logger` redaction) and IPC boundaries.
+- [x] Setup guide in `docs/GOOGLE_DRIVE_SETUP.md` and `.env.example`.
+
+---
+
+## 🔮 Phase 2B: Cloud Game Scanning & Catalog Ingestion (UPCOMING ⏳)
 - [ ] Google Drive recursive folder scanner (`files.list` with mimeType filtering for ISO, ROM, EXE, ZIP, 7Z, RAR, NSP, PKG).
 - [ ] Folder-to-Game heuristic indexing (identifying game names and platforms from folder hierarchy).
 - [ ] Background sync worker updating SQLite catalog with delta changes.
+- [ ] Multi-account inventory aggregation (browsing games across all connected accounts unified in the library).
 
 ---
 

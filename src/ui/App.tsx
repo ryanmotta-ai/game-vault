@@ -86,15 +86,25 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleAddAccount = async (name: string, type: StorageProviderType, email?: string) => {
+  const handleConnectAccount = async (type: StorageProviderType, name?: string) => {
     if (!window.gameVault) return;
-    try {
-      await window.gameVault.addStorageAccount({ name, type, email });
-      showToast(`Storage account "${name}" connected successfully.`);
-      await loadData();
-    } catch (err) {
-      console.error('Failed to add account:', err);
-    }
+    const account = await window.gameVault.connectStorageAccount({ type, name });
+    showToast(`Storage account "${account.accountName}" connected successfully.`);
+    await loadData();
+  };
+
+  const handleDisconnectAccount = async (accountId: string) => {
+    if (!window.gameVault) return;
+    await window.gameVault.disconnectStorageAccount(accountId);
+    showToast('Storage account disconnected.');
+    await loadData();
+  };
+
+  const handleReconnectAccount = async (accountId: string) => {
+    if (!window.gameVault) return;
+    const account = await window.gameVault.reconnectStorageAccount(accountId);
+    showToast(`Storage account "${account.accountName}" reconnected.`);
+    await loadData();
   };
 
   const installedCount = games.filter((g) => g.state === 'READY').length;
@@ -138,7 +148,9 @@ export const App: React.FC = () => {
               accounts={accounts}
               quotaSummary={quotaSummary}
               onClearCache={handleClearCache}
-              onAddAccount={handleAddAccount}
+              onConnectAccount={handleConnectAccount}
+              onDisconnectAccount={handleDisconnectAccount}
+              onReconnectAccount={handleReconnectAccount}
             />
           )}
           {activeTab === 'settings' && <SettingsView />}

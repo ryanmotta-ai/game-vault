@@ -65,6 +65,8 @@ export interface StorageProviderConfig {
   accountId: string;
   accountName: string;
   providerType?: StorageProviderType;
+  providerAccountId?: string;
   accountEmail?: string;
+  credentialKey?: string;
   tokenRef?: string;
 }

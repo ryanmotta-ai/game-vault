@@ -58,3 +58,56 @@ export class NotImplementedError extends AppError {
     super(`Feature '${feature}' is not yet implemented in this foundation phase.`, 'NOT_IMPLEMENTED', 501);
   }
 }
+
+export class OAuthCancelledError extends AuthError {
+  constructor(message = 'Google authorization was cancelled by the user.') {
+    super(message, { reason: 'USER_CANCELLED' });
+    Object.assign(this, { code: 'OAUTH_CANCELLED', statusCode: 400 });
+  }
+}
+
+export class OAuthTimeoutError extends AuthError {
+  constructor(message = 'Google authorization timed out waiting for response.') {
+    super(message, { reason: 'TIMEOUT' });
+    Object.assign(this, { code: 'OAUTH_TIMEOUT', statusCode: 408 });
+  }
+}
+
+export class OAuthConfigurationError extends AppError {
+  constructor(message = 'Google OAuth credentials (Client ID / Secret) are not configured.') {
+    super(message, 'OAUTH_CONFIG_ERROR', 500);
+  }
+}
+
+export class TokenRefreshError extends AuthError {
+  constructor(message = 'Failed to refresh Google Drive access token. Re-authentication required.', details?: unknown) {
+    super(message, details);
+    Object.assign(this, { code: 'TOKEN_REFRESH_FAILED', statusCode: 401 });
+  }
+}
+
+export class AccountAlreadyConnectedError extends AppError {
+  constructor(email?: string) {
+    super(
+      email
+        ? `The Google account (${email}) is already connected.`
+        : 'This storage account is already connected.',
+      'ACCOUNT_ALREADY_CONNECTED',
+      409
+    );
+  }
+}
+
+export class CredentialStoreError extends AppError {
+  constructor(message: string, details?: unknown) {
+    super(message, 'CREDENTIAL_STORE_ERROR', 500, details);
+  }
+}
+
+export class GoogleApiError extends StorageError {
+  constructor(message: string, public readonly status = 500, details?: unknown) {
+    super(`Google Drive API Error (${status}): ${message}`, details);
+    Object.assign(this, { code: 'GOOGLE_API_ERROR', statusCode: status });
+  }
+}
+

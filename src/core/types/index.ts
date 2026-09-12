@@ -40,15 +40,16 @@ export type StorageProviderType = 'google_drive' | 'onedrive' | 'dropbox' | 'nas
 export interface StorageAccount {
   id: string;
   providerType: StorageProviderType;
+  providerAccountId: string;
   accountName: string;
   accountEmail?: string;
+  credentialKey: string;
   status: StorageAccountStatus;
   quotaTotalBytes: number;
   quotaUsedBytes: number;
-  authConfigSecureRef?: string;
-  lastSyncedAt?: string;
   createdAt: string;
   updatedAt: string;
+  lastAuthenticatedAt?: string;
 }
 
 export type GameFileStatus = 'REMOTE' | 'DOWNLOADING' | 'CACHED_LOCAL';
