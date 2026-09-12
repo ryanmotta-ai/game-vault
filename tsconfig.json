@@ -1,0 +1,34 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": false,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"],
+      "@desktop/*": ["src/desktop/*"],
+      "@ui/*": ["src/ui/*"],
+      "@core/*": ["src/core/*"],
+      "@storage/*": ["src/storage/*"],
+      "@providers/*": ["src/providers/*"],
+      "@database/*": ["src/database/*"],
+      "@downloads/*": ["src/downloads/*"],
+      "@launchers/*": ["src/launchers/*"],
+      "@emulators/*": ["src/emulators/*"],
+      "@metadata/*": ["src/metadata/*"]
+    }
+  },
+  "include": ["src", "scripts"]
+}
