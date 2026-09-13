@@ -259,6 +259,10 @@ export class StorageManager {
     return this.providers.size;
   }
 
+  public clear(): void {
+    this.providers.clear();
+  }
+
   public getAccounts(): StorageAccount[] {
     if (this.accountsRepo) {
       return this.accountsRepo.getByStatus('ACTIVE');

@@ -69,6 +69,68 @@ const api = {
   setSetting: (key: string, value: unknown): Promise<{ success: boolean }> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_SET, key, value),
 
+<<<<<<< Updated upstream
+=======
+  // Connected Services & Integrations Hub
+  getIntegrations: (): Promise<SanitizedIntegrationView[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INTEGRATIONS_LIST),
+  getIntegrationDetails: (id: string): Promise<SanitizedIntegrationView | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INTEGRATIONS_GET, id),
+  getIntegrationConnections: (integrationId?: string): Promise<IntegrationConnection[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INTEGRATIONS_GET_CONNECTIONS, integrationId),
+  connectIntegration: (integrationId: string, options?: ConnectOptions): Promise<IntegrationConnection> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INTEGRATIONS_CONNECT, { integrationId, options }),
+  disconnectIntegration: (connectionId: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INTEGRATIONS_DISCONNECT, connectionId),
+  removeIntegrationConnection: (connectionId: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INTEGRATIONS_REMOVE_CONNECTION, connectionId),
+  testIntegrationConnection: (connectionId: string): Promise<ConnectionTestResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INTEGRATIONS_TEST, connectionId),
+  getIntegrationHealth: (connectionId: string): Promise<IntegrationHealth> =>
+    ipcRenderer.invoke(IPC_CHANNELS.INTEGRATIONS_GET_HEALTH, connectionId),
+
+  // Metadata & Artwork Scraping (Phase 5A)
+  scrapeGameMetadata: (gameId: string): Promise<any> =>
+    ipcRenderer.invoke(IPC_CHANNELS.METADATA_SCRAPE_GAME, gameId),
+  scrapeAllMetadata: (options?: { overwrite?: boolean }): Promise<{ total: number; scraped: number; failed: number }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.METADATA_SCRAPE_ALL, options),
+  searchMetadata: (query: string, platform?: string, gameId?: string): Promise<any[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.METADATA_SEARCH, { query, platform, gameId }),
+  applyMetadataCandidate: (gameId: string, candidate: any, isUserConfirmed?: boolean): Promise<any> =>
+    ipcRenderer.invoke(IPC_CHANNELS.METADATA_APPLY_CANDIDATE, { gameId, candidate, isUserConfirmed }),
+  getGameMetadataDetails: (gameId: string): Promise<any> =>
+    ipcRenderer.invoke(IPC_CHANNELS.METADATA_GET_DETAILS, gameId),
+  setMetadataUserOverride: (gameId: string, field: string, value: any): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.METADATA_SET_USER_OVERRIDE, { gameId, field, value }),
+  removeMetadataUserOverride: (gameId: string, field: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.METADATA_REMOVE_USER_OVERRIDE, { gameId, field }),
+  getMetadataReviewQueue: (limit?: number): Promise<any[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.METADATA_GET_REVIEW_QUEUE, limit),
+  resolveMetadataReview: (sourceId: string, status: 'USER_CONFIRMED' | 'REJECTED', candidate?: any): Promise<any> =>
+    ipcRenderer.invoke(IPC_CHANNELS.METADATA_RESOLVE_REVIEW, { sourceId, status, candidate }),
+  saveCustomArtwork: (gameId: string, type: string, filePath: string): Promise<{ success: boolean; path: string }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.METADATA_SAVE_CUSTOM_ARTWORK, { gameId, type, filePath }),
+  browseArtworkFile: (): Promise<string | null> =>
+    ipcRenderer.invoke(IPC_CHANNELS.METADATA_BROWSE_ARTWORK_FILE),
+  enqueueMetadataJob: (gameId: string, priority?: string): Promise<any> =>
+    ipcRenderer.invoke(IPC_CHANNELS.METADATA_ENQUEUE_JOB, { gameId, priority }),
+  getMetadataJobStatus: (gameId: string): Promise<any> =>
+    ipcRenderer.invoke(IPC_CHANNELS.METADATA_GET_JOB_STATUS, gameId),
+  getArtworkCacheStats: (): Promise<any> =>
+    ipcRenderer.invoke(IPC_CHANNELS.METADATA_GET_CACHE_STATS),
+  clearArtworkCache: (gameId?: string): Promise<{ success: boolean }> =>
+    ipcRenderer.invoke(IPC_CHANNELS.METADATA_CLEAR_CACHE, gameId),
+  onMetadataProgress: (callback: (event: any) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, eventData: any) => {
+      callback(eventData);
+    };
+    ipcRenderer.on(IPC_CHANNELS.METADATA_PROGRESS_EVENT, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.METADATA_PROGRESS_EVENT, handler);
+    };
+  },
+
+>>>>>>> Stashed changes
   // System & Window controls
   getSystemInfo: (): Promise<{
     appName: string;

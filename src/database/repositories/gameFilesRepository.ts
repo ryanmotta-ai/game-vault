@@ -67,13 +67,39 @@ export class GameFilesRepository {
     return rows.map(mapRowToFile);
   }
 
-  public updateRemotePath(id: string, remotePath: string): void {
+  public updateRemotePath(id: string, remotePath: string, filename?: string): void {
     const stmt = this.db.prepare(`
       UPDATE game_files
-      SET remote_path = ?, updated_at = ?
+      SET remote_path = ?, filename = COALESCE(?, filename), updated_at = ?
       WHERE id = ?
     `);
-    stmt.run(remotePath, new Date().toISOString(), id);
+    stmt.run(remotePath, filename ?? null, new Date().toISOString(), id);
+  }
+
+  public updateSubtreePaths(storageAccountId: string, oldFolderPath: string, newFolderPath: string): number {
+    const prefix = oldFolderPath.endsWith('/') ? oldFolderPath : `${oldFolderPath}/`;
+    const newPrefix = newFolderPath.endsWith('/') ? newFolderPath : `${newFolderPath}/`;
+    const prefixLen = prefix.length;
+
+    const stmt = this.db.prepare(`
+      UPDATE game_files
+      SET remote_path = ? || SUBSTR(remote_path, ?),
+          updated_at = ?
+      WHERE storage_account_id = ? AND remote_path LIKE ? || '%'
+    `);
+    const now = new Date().toISOString();
+    const res = stmt.run(newPrefix, prefixLen + 1, now, storageAccountId, prefix);
+    return res.changes;
+  }
+
+  public updateStatusByRemoteFileId(storageAccountId: string, remoteFileId: string, status: GameFileStatus): boolean {
+    const stmt = this.db.prepare(`
+      UPDATE game_files
+      SET status = ?, updated_at = ?
+      WHERE storage_account_id = ? AND remote_file_id = ?
+    `);
+    const res = stmt.run(status, new Date().toISOString(), storageAccountId, remoteFileId);
+    return res.changes > 0;
   }
 
   public upsert(file: GameFile): void {

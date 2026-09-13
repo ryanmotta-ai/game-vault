@@ -42,8 +42,8 @@ export function applySecurityPolicies(mainWindow: BrowserWindow): void {
         ...details.responseHeaders,
         'Content-Security-Policy': [
           process.env.NODE_ENV === 'development'
-            ? "default-src 'self' 'unsafe-inline' http://localhost:5173 ws://localhost:5173 https://images.unsplash.com https://cdn.cloudflare.steamstatic.com data: blob:; img-src 'self' data: https:;"
-            : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:;"
+            ? "default-src 'self' 'unsafe-inline' http://localhost:5173 ws://localhost:5173 https://images.unsplash.com https://cdn.cloudflare.steamstatic.com data: blob:; img-src 'self' data: https: local-artwork: file:;"
+            : "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: local-artwork: file:; font-src 'self' data:;"
         ]
       }
     });

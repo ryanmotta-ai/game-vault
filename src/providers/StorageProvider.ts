@@ -1,7 +1,8 @@
-import { StorageProviderType } from '../core/types';
+import { StorageProviderType, RangeReadResult } from '../core/types';
 import {
   AuthCredentials,
   AuthResult,
+  DownloadRequest,
   DownloadProgress,
   DownloadResult,
   FileMetadata,
@@ -16,6 +17,7 @@ export interface StorageProvider {
   readonly id: string;
   readonly name: string;
   readonly type: StorageProviderType;
+  readonly supportsRangeReads?: boolean;
 
   /**
    * Authenticates against the remote storage provider.
@@ -65,10 +67,11 @@ export interface StorageProvider {
 
   /**
    * Downloads remote file to local destination path with progress notifications.
+   * Supports either a DownloadRequest object or (fileId, destinationPath, onProgress).
    */
   download(
-    fileId: string,
-    destinationPath: string,
+    requestOrFileId: DownloadRequest | string,
+    destinationPathOrOnProgress?: string | ((progress: DownloadProgress) => void),
     onProgress?: (progress: DownloadProgress) => void
   ): Promise<DownloadResult>;
 
@@ -81,4 +84,15 @@ export interface StorageProvider {
    * Queries the user's storage quota (total, used, free bytes).
    */
   getQuota(): Promise<StorageQuota>;
+
+  /**
+   * Reads a byte range from a remote file.
+   * Required for progressive streaming and block caching.
+   */
+  readRange?(
+    fileId: string,
+    start: number,
+    end: number,
+    signal?: AbortSignal
+  ): Promise<RangeReadResult>;
 }

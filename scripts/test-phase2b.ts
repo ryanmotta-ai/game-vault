@@ -747,8 +747,8 @@ async function runPhase2BTests() {
   const runner = new MigrationRunner(db);
   runner.runMigrations(MIGRATIONS);
   const migrationsCount = db.prepare('SELECT COUNT(*) as count FROM schema_migrations').get() as { count: number };
-  assert(migrationsCount.count === 4, `Expected 4 migrations registered, found ${migrationsCount.count}`);
-  console.log('✔ All 4 database migrations applied idempotently without duplicate records.');
+  assert(migrationsCount.count === MIGRATIONS.length, `Expected ${MIGRATIONS.length} migrations registered, found ${migrationsCount.count}`);
+  console.log(`✔ All ${migrationsCount.count} database migrations applied idempotently without duplicate records.`);
 
   // --------------------------------------------------------------------------
   // TEST 24: Cancelamento de scan

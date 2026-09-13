@@ -23,12 +23,16 @@ export const Header: React.FC<HeaderProps> = ({
         justifyContent: 'space-between',
         padding: '14px 36px',
         background: 'var(--bg-header)',
+        backdropFilter: 'blur(16px)',
+        WebkitBackdropFilter: 'blur(16px)',
         borderBottom: '1px solid var(--border-color)',
-        height: '68px'
+        height: '70px',
+        zIndex: 10,
+        flexShrink: 0
       }}
     >
       {/* Search Bar */}
-      <div style={{ position: 'relative', width: '380px' }}>
+      <div style={{ position: 'relative', width: '400px' }}>
         <input
           type="text"
           placeholder="Search games, platforms, developers..."
@@ -36,30 +40,65 @@ export const Header: React.FC<HeaderProps> = ({
           onChange={(e) => onSearchChange(e.target.value)}
           style={{
             width: '100%',
-            padding: '9px 14px 9px 36px',
+            padding: '10px 38px 10px 38px',
             fontSize: '13px',
             background: 'var(--bg-surface)',
             border: '1px solid var(--border-color)',
-            borderRadius: 'var(--radius-sm)',
+            borderRadius: 'var(--radius-full)',
             color: 'var(--text-primary)',
             outline: 'none',
-            transition: 'border-color 0.2s'
+            transition: 'all var(--transition-fast)',
+            boxShadow: 'inset 0 1px 3px rgba(0, 0, 0, 0.3)'
           }}
-          onFocus={(e) => (e.target.style.borderColor = 'var(--border-focus)')}
-          onBlur={(e) => (e.target.style.borderColor = 'var(--border-color)')}
+          onFocus={(e) => {
+            e.target.style.borderColor = 'var(--border-focus)';
+            e.target.style.boxShadow = '0 0 0 3px rgba(59, 130, 246, 0.25)';
+          }}
+          onBlur={(e) => {
+            e.target.style.borderColor = 'var(--border-color)';
+            e.target.style.boxShadow = 'inset 0 1px 3px rgba(0, 0, 0, 0.3)';
+          }}
         />
         <span
           style={{
             position: 'absolute',
-            left: '12px',
+            left: '14px',
             top: '50%',
             transform: 'translateY(-50%)',
             color: 'var(--text-muted)',
-            fontSize: '14px'
+            fontSize: '14px',
+            pointerEvents: 'none'
           }}
         >
           🔍
         </span>
+        {searchQuery && (
+          <button
+            onClick={() => onSearchChange('')}
+            style={{
+              position: 'absolute',
+              right: '12px',
+              top: '50%',
+              transform: 'translateY(-50%)',
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--text-muted)',
+              cursor: 'pointer',
+              fontSize: '12px',
+              padding: '4px',
+              borderRadius: '50%',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'color var(--transition-fast)'
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
+            onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
+            title="Clear search"
+          >
+            ✕
+          </button>
+        )}
       </div>
 
       {/* Right Controls: Storage Indicator + Profile */}
@@ -75,16 +114,30 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Profile Avatar / Status */}
         <div
+          onClick={onNavigateToStorage}
           style={{
             display: 'flex',
             alignItems: 'center',
             gap: '10px',
-            padding: '4px 10px 4px 4px',
+            padding: '4px 12px 4px 5px',
             background: 'var(--bg-surface)',
-            borderRadius: '24px',
+            borderRadius: 'var(--radius-full)',
             border: '1px solid var(--border-color)',
-            cursor: 'pointer'
+            cursor: 'pointer',
+            transition: 'all var(--transition-fast)',
+            boxShadow: 'var(--shadow-sm)'
           }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.2)';
+            e.currentTarget.style.background = 'var(--bg-surface-elevated)';
+            e.currentTarget.style.transform = 'translateY(-1px)';
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.borderColor = 'var(--border-color)';
+            e.currentTarget.style.background = 'var(--bg-surface)';
+            e.currentTarget.style.transform = 'translateY(0)';
+          }}
+          title="Account & Storage"
         >
           <div
             style={{
@@ -95,16 +148,30 @@ export const Header: React.FC<HeaderProps> = ({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontWeight: 700,
-              fontSize: '13px',
-              color: '#ffffff'
+              fontWeight: 800,
+              fontSize: '12px',
+              color: '#ffffff',
+              boxShadow: '0 0 10px rgba(59, 130, 246, 0.4)'
             }}
           >
             GV
           </div>
           <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-primary)' }}>Vault User</span>
-            <span style={{ fontSize: '10px', color: 'var(--accent-green)' }}>● Online</span>
+            <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '0.2px' }}>
+              Vault Player
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <span
+                style={{
+                  width: '6px',
+                  height: '6px',
+                  borderRadius: '50%',
+                  background: 'var(--accent-green)',
+                  boxShadow: '0 0 6px rgba(16, 185, 129, 0.8)'
+                }}
+              />
+              <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--accent-green)' }}>Online</span>
+            </div>
           </div>
         </div>
       </div>

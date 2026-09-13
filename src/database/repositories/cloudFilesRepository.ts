@@ -21,6 +21,7 @@ interface CloudFileRow {
   classification_confidence: number;
   first_seen_at: string;
   last_seen_at: string;
+  last_seen_run_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -46,6 +47,7 @@ function mapRowToFile(row: CloudFileRow): CloudFile {
     classificationConfidence: row.classification_confidence,
     firstSeenAt: row.first_seen_at,
     lastSeenAt: row.last_seen_at,
+    lastSeenRunId: row.last_seen_run_id ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at
   };
@@ -95,12 +97,12 @@ export class CloudFilesRepository {
         id, storage_account_id, remote_file_id, name, extension, mime_type,
         size_bytes, md5_checksum, parent_remote_id, remote_path, modified_time,
         is_folder, is_shortcut, trashed, classification, detected_platform,
-        classification_confidence, first_seen_at, last_seen_at, created_at, updated_at
+        classification_confidence, first_seen_at, last_seen_at, last_seen_run_id, created_at, updated_at
       ) VALUES (
         @id, @storageAccountId, @remoteFileId, @name, @extension, @mimeType,
         @sizeBytes, @md5Checksum, @parentRemoteId, @remotePath, @modifiedTime,
         @isFolder, @isShortcut, @trashed, @classification, @detectedPlatform,
-        @classificationConfidence, @firstSeenAt, @lastSeenAt, @createdAt, @updatedAt
+        @classificationConfidence, @firstSeenAt, @lastSeenAt, @lastSeenRunId, @createdAt, @updatedAt
       )
       ON CONFLICT(storage_account_id, remote_file_id) DO UPDATE SET
         name = excluded.name,
@@ -118,6 +120,7 @@ export class CloudFilesRepository {
         detected_platform = excluded.detected_platform,
         classification_confidence = excluded.classification_confidence,
         last_seen_at = excluded.last_seen_at,
+        last_seen_run_id = COALESCE(excluded.last_seen_run_id, cloud_files.last_seen_run_id),
         updated_at = excluded.updated_at`
     );
 
@@ -141,6 +144,7 @@ export class CloudFilesRepository {
       classificationConfidence: file.classificationConfidence,
       firstSeenAt: file.firstSeenAt,
       lastSeenAt: file.lastSeenAt,
+      lastSeenRunId: file.lastSeenRunId ?? null,
       createdAt: file.createdAt,
       updatedAt: file.updatedAt
     });
@@ -154,12 +158,12 @@ export class CloudFilesRepository {
         id, storage_account_id, remote_file_id, name, extension, mime_type,
         size_bytes, md5_checksum, parent_remote_id, remote_path, modified_time,
         is_folder, is_shortcut, trashed, classification, detected_platform,
-        classification_confidence, first_seen_at, last_seen_at, created_at, updated_at
+        classification_confidence, first_seen_at, last_seen_at, last_seen_run_id, created_at, updated_at
       ) VALUES (
         @id, @storageAccountId, @remoteFileId, @name, @extension, @mimeType,
         @sizeBytes, @md5Checksum, @parentRemoteId, @remotePath, @modifiedTime,
         @isFolder, @isShortcut, @trashed, @classification, @detectedPlatform,
-        @classificationConfidence, @firstSeenAt, @lastSeenAt, @createdAt, @updatedAt
+        @classificationConfidence, @firstSeenAt, @lastSeenAt, @lastSeenRunId, @createdAt, @updatedAt
       )
       ON CONFLICT(storage_account_id, remote_file_id) DO UPDATE SET
         name = excluded.name,
@@ -177,6 +181,7 @@ export class CloudFilesRepository {
         detected_platform = excluded.detected_platform,
         classification_confidence = excluded.classification_confidence,
         last_seen_at = excluded.last_seen_at,
+        last_seen_run_id = COALESCE(excluded.last_seen_run_id, cloud_files.last_seen_run_id),
         updated_at = excluded.updated_at`
     );
 
@@ -202,6 +207,7 @@ export class CloudFilesRepository {
           classificationConfidence: file.classificationConfidence,
           firstSeenAt: file.firstSeenAt,
           lastSeenAt: file.lastSeenAt,
+          lastSeenRunId: file.lastSeenRunId ?? null,
           createdAt: file.createdAt,
           updatedAt: file.updatedAt
         });
@@ -209,6 +215,67 @@ export class CloudFilesRepository {
     });
 
     runBatch(files);
+  }
+
+  public getFolderByRemoteId(storageAccountId: string, remoteFolderId: string): CloudFile | null {
+    const stmt = this.db.prepare(
+      `SELECT * FROM cloud_files
+      WHERE storage_account_id = ? AND remote_file_id = ? AND is_folder = 1`
+    );
+    const row = stmt.get(storageAccountId, remoteFolderId) as CloudFileRow | undefined;
+    return row ? mapRowToFile(row) : null;
+  }
+
+  public updateSubtreePaths(storageAccountId: string, oldFolderPath: string, newFolderPath: string): number {
+    const prefix = oldFolderPath.endsWith('/') ? oldFolderPath : `${oldFolderPath}/`;
+    const newPrefix = newFolderPath.endsWith('/') ? newFolderPath : `${newFolderPath}/`;
+    const prefixLen = prefix.length;
+
+    // Update folder itself first
+    const updateSelfStmt = this.db.prepare(
+      `UPDATE cloud_files
+      SET remote_path = ?, updated_at = ?
+      WHERE storage_account_id = ? AND remote_path = ?`
+    );
+    const now = new Date().toISOString();
+    const selfRes = updateSelfStmt.run(newFolderPath, now, storageAccountId, oldFolderPath);
+
+    // Update all descendant files and subfolders
+    const updateDescendantsStmt = this.db.prepare(
+      `UPDATE cloud_files
+      SET remote_path = ? || SUBSTR(remote_path, ?),
+          updated_at = ?
+      WHERE storage_account_id = ? AND remote_path LIKE ? || '%'`
+    );
+    const descRes = updateDescendantsStmt.run(newPrefix, prefixLen + 1, now, storageAccountId, prefix);
+
+    return selfRes.changes + descRes.changes;
+  }
+
+  public reconcileUnseenFiles(storageAccountId: string, currentRunId: string): string[] {
+    const rows = this.db.prepare(
+      `SELECT remote_file_id FROM cloud_files
+      WHERE storage_account_id = ? 
+        AND trashed = 0 
+        AND (last_seen_run_id != ? OR last_seen_run_id IS NULL)`
+    ).all(storageAccountId, currentRunId) as Array<{ remote_file_id: string }>;
+
+    if (rows.length > 0) {
+      const stmt = this.db.prepare(
+        `UPDATE cloud_files
+        SET trashed = 1, updated_at = ?
+        WHERE storage_account_id = ? AND remote_file_id = ?`
+      );
+      const now = new Date().toISOString();
+      const batch = this.db.transaction((items: Array<{ remote_file_id: string }>) => {
+        for (const r of items) {
+          stmt.run(now, storageAccountId, r.remote_file_id);
+        }
+      });
+      batch(rows);
+    }
+
+    return rows.map((r) => r.remote_file_id);
   }
 
   public updateRemotePath(storageAccountId: string, remoteFileId: string, newPath: string, parentRemoteId?: string): void {

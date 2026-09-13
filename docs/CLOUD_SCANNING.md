@@ -63,7 +63,8 @@ flowchart TD
 ### 4.2 Non-Destructive Catalog Updates
 - **File Moved or Renamed:** Updated in-place in `cloud_files` and `game_files.remote_path`. The associated game entity and its user play history (play time, last played) remain untouched.
 - **File Trashed or Deleted:** Flagged as `trashed = 1` in `cloud_files` and transitioned to `status = 'MISSING'` in `game_files`. Catalog entries are **never** deleted, ensuring user play history, custom covers, and notes are preserved.
-- **File Restored:** If a previously missing file reappears in changes, its status automatically returns to `'CLOUD'`.
+- **File Restored:** If a previously missing file reappears in changes, its status automatically returns to `'REMOTE'` (or `'CACHED_LOCAL'` if cache is intact).
+- **Deep Hierarchical Updates:** Refer to `docs/SYNC_CORRECTNESS.md` for full details on virtual path reconstruction, folder rename/move subtree cascades, and the 6-step race prevention protocol during initial scanning.
 
 ---
 
@@ -121,10 +122,14 @@ Removes scene release tags, region markers, revision flags, and translation cred
   - Enforces `UNIQUE(storage_account_id, remote_file_id)`.
   - Indexes `storage_account_id`, `remote_path`, and `classification`.
 
-### `004_storage_sync_state`
 - Creates `storage_sync_state` table for tracking `start_page_token`, `next_change_page_token`, and timestamps per account.
 - Creates `sync_runs` table for auditing sync run metrics (`folders_scanned`, `files_scanned`, `games_detected`, `error_message`).
-- Migrates `game_files` table cleanly with a new check constraint allowing `status IN ('CLOUD', 'DOWNLOADING', 'READY', 'CORRUPTED', 'MISSING')` without data loss.
+- Status constraints in `game_files` support `('REMOTE', 'DOWNLOADING', 'CACHED_LOCAL', 'MISSING')` representing individual file lifecycle.
+
+### `005_sync_correctness`
+- Adds `last_seen_run_id TEXT` column to `cloud_files` for generation-based tracking.
+- Adds composite index `idx_cloud_files_run_seen` on `(storage_account_id, last_seen_run_id)`.
+- Enables non-destructive reconciliation of unseen files on successful full scans.
 
 ---
 

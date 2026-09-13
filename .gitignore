@@ -15,3 +15,7 @@ Thumbs.db
 .env.*.local
 *.enc
 *.key
+
+# Test caches
+.test_cache*
+.test_phase*

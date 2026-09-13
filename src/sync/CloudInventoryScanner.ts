@@ -44,7 +44,8 @@ export class CloudInventoryScanner {
   public async scanAccount(
     provider: StorageProvider,
     cancellationToken?: CancellationToken,
-    onProgress?: (report: ScanProgressReport) => void
+    onProgress?: (report: ScanProgressReport) => void,
+    scanRunId?: string
   ): Promise<{ foldersScanned: number; filesScanned: number }> {
     this.log.info(`Starting cloud inventory scan for account '${provider.name}' (${provider.id})...`);
 
@@ -153,6 +154,7 @@ export class CloudInventoryScanner {
             classificationConfidence: classification.confidenceScore,
             firstSeenAt: now,
             lastSeenAt: now,
+            lastSeenRunId: scanRunId,
             createdAt: now,
             updatedAt: now
           };

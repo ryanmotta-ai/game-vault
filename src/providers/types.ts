@@ -43,19 +43,32 @@ export interface StorageQuota {
   freeBytes: number;
 }
 
+export interface DownloadRequest {
+  fileId: string;
+  destinationPath: string;
+  startByte?: number;
+  expectedSize?: number;
+  signal?: AbortSignal;
+}
+
 export interface DownloadProgress {
   fileId: string;
   bytesTransferred: number;
   totalBytes: number;
   speedBps: number;
   percentage: number;
+  etaSeconds?: number;
 }
 
 export interface DownloadResult {
   destinationPath: string;
   bytesWritten: number;
-  md5Checksum?: string;
+  totalBytes?: number;
+  startByte?: number;
+  resumed?: boolean;
   durationMs: number;
+  etag?: string;
+  md5Checksum?: string;
 }
 
 export interface FileMetadata {

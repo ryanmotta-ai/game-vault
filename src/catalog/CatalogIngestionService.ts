@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import type { Database } from 'better-sqlite3';
 import { Game, GameFile, GameCandidate, CandidateConfidence } from '../core/types';
 import { GamesRepository } from '../database/repositories/gamesRepository';
 import { GameFilesRepository } from '../database/repositories/gameFilesRepository';
@@ -27,8 +28,9 @@ export class CatalogIngestionService {
   private log = logger.child('CatalogIngestion');
 
   constructor(
-    private gamesRepo: GamesRepository,
-    private gameFilesRepo: GameFilesRepository
+    public readonly gamesRepo: GamesRepository,
+    public readonly gameFilesRepo: GameFilesRepository,
+    public readonly db?: Database
   ) {}
 
   /**
@@ -54,12 +56,7 @@ export class CatalogIngestionService {
         ? ['HIGH', 'MEDIUM']
         : ['HIGH'];
 
-    for (const candidate of candidates) {
-      if (!allowedConfidences.includes(candidate.confidence)) {
-        result.skippedLowConfidence++;
-        continue;
-      }
-
+    const processCandidate = (candidate: GameCandidate) => {
       // 1. Generate unique collision-safe slug
       const baseSlug = slugify(candidate.normalizedTitle);
       const platformSlug = slugify(candidate.platform);
@@ -103,6 +100,21 @@ export class CatalogIngestionService {
       for (const addFile of candidate.additionalFiles) {
         this.ingestSingleFile(addFile, gameId, result, now);
       }
+    };
+
+    for (const candidate of candidates) {
+      if (!allowedConfidences.includes(candidate.confidence)) {
+        result.skippedLowConfidence++;
+        continue;
+      }
+
+      if (this.db) {
+        this.db.transaction(() => {
+          processCandidate(candidate);
+        })();
+      } else {
+        processCandidate(candidate);
+      }
     }
 
     this.log.info(
@@ -123,12 +135,18 @@ export class CatalogIngestionService {
     );
 
     if (existingFile) {
+      const pathChanged = existingFile.remotePath !== cloudFile.remotePath;
+      const nameChanged = existingFile.filename !== cloudFile.name;
+
       // If remote path or filename changed (remote move/rename), update it without losing identity
-      if (
-        existingFile.remotePath !== cloudFile.remotePath ||
-        existingFile.filename !== cloudFile.name
-      ) {
-        this.gameFilesRepo.updateRemotePath(existingFile.id, cloudFile.remotePath);
+      if (pathChanged || nameChanged) {
+        this.gameFilesRepo.updateRemotePath(existingFile.id, cloudFile.remotePath, cloudFile.name);
+        result.filesUpdated++;
+      }
+
+      // If file was previously MISSING and is no longer trashed, restore to REMOTE
+      if (existingFile.status === 'MISSING' && !cloudFile.trashed) {
+        this.gameFilesRepo.updateStatus(existingFile.id, 'REMOTE');
         result.filesUpdated++;
       }
     } else {

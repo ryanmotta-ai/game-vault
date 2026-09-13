@@ -1,7 +1,12 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { StorageProvider } from '../StorageProvider';
 import {
   AuthCredentials,
   AuthResult,
+  DownloadRequest,
   DownloadProgress,
   DownloadResult,
   FileMetadata,
@@ -13,8 +18,19 @@ import {
   ChangeListResult,
   RemoteChange
 } from '../types';
-import { StorageProviderType } from '../../core/types';
-import { NotImplementedError, GoogleApiError, AuthError, RateLimitExceededError } from '../../core/errors/AppError';
+import { StorageProviderType, RangeReadResult } from '../../core/types';
+import {
+  GoogleApiError,
+  AuthError,
+  RateLimitExceededError,
+  DownloadCancelledError,
+  RemoteNotFoundError,
+  InvalidRangeResponseError,
+  RateLimitedError,
+  AuthExpiredError,
+  PermissionDeniedError,
+  NetworkError
+} from '../../core/errors/AppError';
 import { Logger } from '../../core/logger';
 import { CredentialStore, getCredentialStore } from '../../core/security/CredentialStore';
 import { googleOAuthService, GoogleOAuthService } from './GoogleOAuthService';
@@ -23,6 +39,7 @@ export class GoogleDriveProvider implements StorageProvider {
   public readonly id: string;
   public readonly name: string;
   public readonly type: StorageProviderType = 'google_drive';
+  public readonly supportsRangeReads = true;
   public providerAccountId?: string;
   public accountEmail?: string;
   public credentialKey: string;
@@ -148,7 +165,7 @@ export class GoogleDriveProvider implements StorageProvider {
     };
   }
 
-  public async getValidAccessToken(): Promise<string> {
+  public async getValidAccessToken(force = false): Promise<string> {
     const tokens = await this.credentialStore.getTokenPayload(this.credentialKey);
     if (!tokens) {
       throw new AuthError(`No stored credentials found for account '${this.name}' (${this.id})`);
@@ -156,7 +173,7 @@ export class GoogleDriveProvider implements StorageProvider {
 
     const now = Date.now();
     // If accessToken is present and not expired (with 60s buffer)
-    if (tokens.accessToken && tokens.expiryDate && tokens.expiryDate > now) {
+    if (!force && tokens.accessToken && tokens.expiryDate && tokens.expiryDate > now) {
       return tokens.accessToken;
     }
 
@@ -477,11 +494,237 @@ export class GoogleDriveProvider implements StorageProvider {
   }
 
   public async download(
-    _fileId: string,
-    _destinationPath: string,
-    _onProgress?: (progress: DownloadProgress) => void
+    requestOrFileId: DownloadRequest | string,
+    destinationPathOrOnProgress?: string | ((progress: DownloadProgress) => void),
+    onProgressCallback?: (progress: DownloadProgress) => void
   ): Promise<DownloadResult> {
-    throw new NotImplementedError('GoogleDriveProvider.download (Phase 3)');
+    let req: DownloadRequest;
+    let onProgress: ((progress: DownloadProgress) => void) | undefined;
+
+    if (typeof requestOrFileId === 'string') {
+      req = {
+        fileId: requestOrFileId,
+        destinationPath: destinationPathOrOnProgress as string
+      };
+      onProgress = onProgressCallback;
+    } else {
+      req = requestOrFileId;
+      onProgress = typeof destinationPathOrOnProgress === 'function' ? destinationPathOrOnProgress : onProgressCallback;
+    }
+
+    const { fileId, destinationPath, signal, startByte, expectedSize } = req;
+
+    // Ensure parent directory exists
+    const parentDir = path.dirname(destinationPath);
+    if (!fs.existsSync(parentDir)) {
+      fs.mkdirSync(parentDir, { recursive: true });
+    }
+
+    const token = await this.getValidAccessToken();
+    const url = new URL(`https://www.googleapis.com/drive/v3/files/${fileId}`);
+    url.searchParams.set('alt', 'media');
+
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`
+    };
+
+    const isResuming = startByte !== undefined && startByte > 0;
+    if (isResuming) {
+      headers['Range'] = `bytes=${startByte}-`;
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(url.toString(), {
+        headers,
+        signal
+      });
+    } catch (err: unknown) {
+      const isAbort =
+        (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'AbortError') ||
+        signal?.aborted;
+      if (isAbort) {
+        throw new DownloadCancelledError(`Download of file ${fileId} was cancelled.`);
+      }
+      throw new NetworkError(`Network connection failed downloading file ${fileId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    // Handle 401 token expiry with automatic refresh
+    if (response.status === 401) {
+      this.logger.warn(`Token expired during download of file ${fileId}, refreshing access token...`);
+      try {
+        const refreshedToken = await this.getValidAccessToken(true);
+        const retryHeaders = { ...headers, Authorization: `Bearer ${refreshedToken}` };
+        response = await fetch(url.toString(), { headers: retryHeaders, signal });
+      } catch (refreshErr) {
+        throw new AuthExpiredError(`Authentication failed after token refresh attempt: ${refreshErr instanceof Error ? refreshErr.message : String(refreshErr)}`);
+      }
+      if (response.status === 401) {
+        throw new AuthExpiredError(`Authentication token expired and could not be refreshed for file ${fileId}.`);
+      }
+    }
+
+    // Handle standard error status codes
+    if (!response.ok) {
+      const retryAfterHeader = response.headers.get('retry-after');
+      const retryAfterSec = retryAfterHeader ? parseInt(retryAfterHeader, 10) : undefined;
+
+      if (response.status === 404) {
+        throw new RemoteNotFoundError(`Remote file ${fileId} was not found on Google Drive.`);
+      }
+      if (response.status === 429) {
+        throw new RateLimitedError(`Rate limit exceeded for Google Drive file ${fileId}.`, retryAfterSec);
+      }
+      if (response.status === 403) {
+        const text = await response.text();
+        if (text.includes('rateLimitExceeded') || text.includes('userRateLimitExceeded')) {
+          throw new RateLimitedError(`Rate limit exceeded for Google Drive file ${fileId}.`, retryAfterSec);
+        }
+        throw new PermissionDeniedError(`Permission denied accessing Google Drive file ${fileId}: ${text}`);
+      }
+      if (response.status === 416) {
+        throw new InvalidRangeResponseError(`Range Not Satisfiable (416) for file ${fileId} at startByte ${startByte}`);
+      }
+      if (response.status >= 500) {
+        throw new NetworkError(`Transient Google Drive server error (${response.status}) for file ${fileId}`);
+      }
+      const text = await response.text();
+      throw new GoogleApiError(`Failed to download file from Google Drive (${response.status}): ${text}`, response.status);
+    }
+
+    // Range Validation:
+    // If we asked for bytes=X- (startByte > 0):
+    // 1. If status is 200 OK: MUST NOT append, throw InvalidRangeResponseError
+    if (isResuming && response.status === 200) {
+      throw new InvalidRangeResponseError(
+        `Server returned 200 OK instead of 206 Partial Content for range request (startByte: ${startByte})`
+      );
+    }
+
+    // 2. If status is 206 Partial Content: validate Content-Range header
+    let totalBytes = expectedSize || 0;
+    if (response.status === 206) {
+      const contentRange = response.headers.get('content-range');
+      if (contentRange) {
+        const match = contentRange.match(/^bytes\s+(\d+)-(\d+)\/(\d+|\*)/i);
+        if (match) {
+          const rangeStart = parseInt(match[1], 10);
+          if (rangeStart !== startByte) {
+            throw new InvalidRangeResponseError(
+              `Content-Range start (${rangeStart}) does not match requested startByte (${startByte})`
+            );
+          }
+          if (match[3] !== '*') {
+            totalBytes = parseInt(match[3], 10);
+          }
+        }
+      }
+    } else {
+      const contentLength = response.headers.get('content-length');
+      if (contentLength) {
+        totalBytes = parseInt(contentLength, 10);
+      }
+    }
+
+    if (!response.body) {
+      throw new GoogleApiError(`Response body is empty for file ${fileId}`);
+    }
+
+    const etag = response.headers.get('etag') || undefined;
+    const startTime = Date.now();
+    let currentBytes = startByte || 0;
+    let lastProgressTime = startTime;
+
+    // Moving window for speed calculation (samples from the last 2000ms)
+    const speedSamples: Array<{ time: number; bytes: number }> = [
+      { time: startTime, bytes: currentBytes }
+    ];
+
+    const progressTransform = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        currentBytes += chunk.length;
+        const now = Date.now();
+
+        speedSamples.push({ time: now, bytes: currentBytes });
+        while (speedSamples.length > 1 && now - speedSamples[0].time > 2000) {
+          speedSamples.shift();
+        }
+
+        if (onProgress && now - lastProgressTime >= 150) {
+          const oldestSample = speedSamples[0];
+          const timeDelta = (now - oldestSample.time) / 1000;
+          const bytesDelta = currentBytes - oldestSample.bytes;
+          const speedBps = timeDelta > 0 ? Math.round(bytesDelta / timeDelta) : 0;
+          const percentage = totalBytes > 0 ? Math.min(100, Math.round((currentBytes / totalBytes) * 100)) : 0;
+          const remainingBytes = Math.max(0, totalBytes - currentBytes);
+          const etaSeconds = speedBps > 0 ? Math.round(remainingBytes / speedBps) : undefined;
+
+          onProgress({
+            fileId,
+            bytesTransferred: currentBytes,
+            totalBytes,
+            speedBps,
+            percentage,
+            etaSeconds
+          });
+
+          lastProgressTime = now;
+        }
+
+        callback(null, chunk);
+      }
+    });
+
+    const fileWriteStream = fs.createWriteStream(destinationPath, { flags: isResuming ? 'a' : 'w' });
+
+    const onAbort = () => {
+      fileWriteStream.destroy();
+    };
+    if (signal) {
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+
+    try {
+      const nodeReadable = Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]);
+      await pipeline(nodeReadable, progressTransform, fileWriteStream);
+    } catch (err: unknown) {
+      const isAbort =
+        (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'AbortError') ||
+        signal?.aborted;
+      if (isAbort) {
+        throw new DownloadCancelledError(`Download of file ${fileId} was cancelled.`);
+      }
+      throw new NetworkError(`Stream pipeline failed for file ${fileId}: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      if (signal) {
+        signal.removeEventListener('abort', onAbort);
+      }
+    }
+
+    const durationMs = Date.now() - startTime;
+    const bytesWrittenInThisSession = currentBytes - (startByte || 0);
+
+    if (onProgress) {
+      const overallSpeed = durationMs > 0 ? Math.round((bytesWrittenInThisSession / durationMs) * 1000) : 0;
+      onProgress({
+        fileId,
+        bytesTransferred: currentBytes,
+        totalBytes: totalBytes > 0 ? totalBytes : currentBytes,
+        speedBps: overallSpeed,
+        percentage: 100,
+        etaSeconds: 0
+      });
+    }
+
+    return {
+      destinationPath,
+      bytesWritten: bytesWrittenInThisSession,
+      totalBytes: totalBytes > 0 ? totalBytes : currentBytes,
+      startByte: startByte || 0,
+      resumed: isResuming,
+      durationMs,
+      etag
+    };
   }
 
   public async getMetadata(fileId: string): Promise<FileMetadata> {
@@ -493,6 +736,77 @@ export class GoogleDriveProvider implements StorageProvider {
       mimeType: file.mimeType,
       md5Checksum: file.md5Checksum,
       modifiedTime: file.modifiedTime
+    };
+  }
+
+  public async readRange(
+    fileId: string,
+    start: number,
+    end: number,
+    signal?: AbortSignal
+  ): Promise<RangeReadResult> {
+    if (start < 0 || end < start || !Number.isFinite(start) || !Number.isFinite(end)) {
+      throw new InvalidRangeResponseError(
+        `Invalid byte range specified: [${start}-${end}]. Offset cannot be negative and end must be >= start.`
+      );
+    }
+
+    const token = await this.getValidAccessToken();
+    const url = new URL(`https://www.googleapis.com/drive/v3/files/${fileId}`);
+    url.searchParams.set('alt', 'media');
+
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${token}`,
+      Range: `bytes=${start}-${end}`
+    };
+
+    let response: Response;
+    try {
+      response = await this.fetchWithRetry(url.toString(), {
+        headers,
+        signal
+      });
+    } catch (err: unknown) {
+      if (signal?.aborted) {
+        throw new DownloadCancelledError(`Range read for file ${fileId} was cancelled.`);
+      }
+      throw err;
+    }
+
+    if (response.status === 416) {
+      throw new InvalidRangeResponseError(`HTTP 416 Range Not Satisfiable for file ${fileId} [${start}-${end}].`);
+    }
+
+    if (response.status !== 206) {
+      throw new InvalidRangeResponseError(
+        `Expected HTTP 206 Partial Content for range read [${start}-${end}], but received status ${response.status}.`
+      );
+    }
+
+    const contentRange = response.headers.get('Content-Range') || undefined;
+    let totalSize: number | undefined;
+    if (contentRange) {
+      const match = contentRange.match(/^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i);
+      if (match) {
+        const rangeStart = parseInt(match[1], 10);
+        if (rangeStart !== start) {
+          throw new InvalidRangeResponseError(
+            `Content-Range start byte mismatch: expected ${start}, received ${rangeStart} (Header: "${contentRange}")`
+          );
+        }
+        if (match[3] !== '*') {
+          totalSize = parseInt(match[3], 10);
+        }
+      }
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const data = Buffer.from(arrayBuffer);
+
+    return {
+      data,
+      contentRange,
+      totalSize
     };
   }
 }

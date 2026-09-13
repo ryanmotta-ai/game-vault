@@ -1,5 +1,6 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, protocol, net } from 'electron';
 import path from 'node:path';
+import fs from 'node:fs';
 import { setupGlobalErrorHandlers } from '../core/errors/globalHandler';
 import { logger } from '../core/logger';
 import { getDb } from '../database/connection';
@@ -20,8 +21,49 @@ import { DownloadManager } from '../downloads/DownloadManager';
 import { registerIpcHandlers } from './ipc/handlers';
 import { applySecurityPolicies } from './security';
 import { seedInitialDataIfEmpty } from './seedData';
+<<<<<<< Updated upstream
+=======
+import { IntegrationConnectionsRepository } from '../database/repositories/integrationConnectionsRepository';
+import {
+  IntegrationManager,
+  integrationRegistry,
+  GoogleDriveIntegrationAdapter,
+  ScreenScraperIntegrationAdapter,
+  RetroAchievementsIntegrationAdapter,
+  IgdbIntegrationAdapter,
+  EmulationStationIntegrationAdapter
+} from '../integrations';
+import {
+  ArtworkCacheManager,
+  MetadataService,
+  SteamStorefrontScraper,
+  IgdbMetadataProvider,
+  MetadataProviderRegistry,
+  MetadataMergeService,
+  MetadataJobManager
+} from '../metadata';
+import { GameMetadataRepository } from '../database/repositories/gameMetadataRepository';
+import { GameMetadataSourcesRepository } from '../database/repositories/gameMetadataSourcesRepository';
+import { GameArtworkRepository } from '../database/repositories/gameArtworkRepository';
+import { MetadataJobsRepository } from '../database/repositories/metadataJobsRepository';
+import { ScreenScraperMetadataProvider } from '../integrations/metadata/ScreenScraperMetadataProvider';
+>>>>>>> Stashed changes
 
 setupGlobalErrorHandlers();
+
+// Register local-artwork custom scheme for instant zero-latency offline artwork rendering
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'local-artwork',
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      bypassCSP: true,
+      stream: true
+    }
+  }
+]);
 
 const log = logger.child('Main');
 let mainWindow: BrowserWindow | null = null;
@@ -95,6 +137,18 @@ async function initializeApp(): Promise<void> {
   const settingsRepo = new SettingsRepository(db);
   const cloudFilesRepo = new CloudFilesRepository(db);
   const syncStateRepo = new SyncStateRepository(db);
+<<<<<<< Updated upstream
+=======
+  const preparationJobsRepo = new PreparationJobsRepository(db);
+  const gameManifestsRepo = new GameManifestsRepository(db);
+  const metadataRepo = new GameMetadataRepository(db);
+  const metadataSourcesRepo = new GameMetadataSourcesRepository(db);
+  const metadataArtworkRepo = new GameArtworkRepository(db);
+  const metadataJobsRepo = new MetadataJobsRepository(db);
+
+  // Configure CacheManager with settings repo
+  cacheManager.setSettingsRepository(settingsRepo);
+>>>>>>> Stashed changes
 
   // Seed Mock Data for Foundation phase
   seedInitialDataIfEmpty(gamesRepo, accountsRepo);
@@ -117,6 +171,59 @@ async function initializeApp(): Promise<void> {
   // Initialize Services
   const downloadManager = new DownloadManager(downloadsRepo, gamesRepo);
 
+  // Register local-artwork custom protocol handler
+  protocol.handle('local-artwork', (request) => {
+    try {
+      const url = new URL(request.url);
+      let filePath = decodeURIComponent(url.hostname + url.pathname);
+      if (/^[a-zA-Z]:/.test(filePath) || /^[a-zA-Z]\//.test(filePath)) {
+        if (/^[a-zA-Z]\//.test(filePath)) {
+          filePath = filePath[0] + ':' + filePath.slice(1);
+        }
+      }
+      if (fs.existsSync(filePath)) {
+        return net.fetch(`file:///${filePath.replace(/\\/g, '/')}`);
+      }
+    } catch (err) {
+      log.warn('Failed to resolve local-artwork file:', err);
+    }
+    return new Response('Not Found', { status: 404 });
+  });
+
+  // Initialize Metadata & Artwork Subsystem (Phase 5A)
+  const artworkCacheManager = new ArtworkCacheManager({
+    artworkBaseDir: cacheManager.getArtworkDir(),
+    artworkRepo: metadataArtworkRepo
+  });
+  const steamScraper = new SteamStorefrontScraper();
+  const screenScraperProvider = new ScreenScraperMetadataProvider(integrationConnectionsRepo);
+  const igdbProvider = new IgdbMetadataProvider(integrationConnectionsRepo);
+
+  const providerRegistry = new MetadataProviderRegistry({
+    integrationManager
+  });
+  providerRegistry.registerProvider(screenScraperProvider);
+  providerRegistry.registerProvider(igdbProvider);
+  providerRegistry.registerProvider(steamScraper);
+
+  const mergeService = new MetadataMergeService(metadataRepo, metadataSourcesRepo, gamesRepo);
+
+  const jobManager = new MetadataJobManager({
+    jobsRepo: metadataJobsRepo,
+    gamesRepo,
+    gameFilesRepo,
+    providerRegistry,
+    mergeService,
+    artworkCache: artworkCacheManager
+  });
+  jobManager.start();
+
+  const metadataService = new MetadataService({
+    gamesRepo,
+    artworkCache: artworkCacheManager,
+    providers: [screenScraperProvider, igdbProvider, steamScraper]
+  });
+
   // Create Window & Register IPC Handlers
   mainWindow = await createWindow();
 
@@ -132,10 +239,27 @@ async function initializeApp(): Promise<void> {
     storageManager,
     cacheManager,
     downloadManager,
+<<<<<<< Updated upstream
     mainWindow
   });
 
   log.info('Game Vault Phase 2B initialized successfully.');
+=======
+    integrationManager,
+    metadataService,
+    artworkCacheManager,
+    metadataRepo,
+    metadataSourcesRepo,
+    metadataArtworkRepo,
+    metadataJobsRepo,
+    providerRegistry,
+    mergeService,
+    jobManager,
+    mainWindow
+  });
+
+  log.info('Game Vault Phase 5A initialized successfully.');
+>>>>>>> Stashed changes
 }
 
 app.whenReady().then(async () => {

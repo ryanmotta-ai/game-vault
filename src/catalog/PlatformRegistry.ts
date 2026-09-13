@@ -184,11 +184,21 @@ export class PlatformRegistry {
     for (const segment of folderSegments) {
       const cleanSegment = segment.trim().replace(/^\[|\]$/g, '');
 
+      // 1. Exact match check first
       for (const def of Object.values(PLATFORM_DEFINITIONS)) {
         if (def.id === 'Unknown' || def.id === 'Retro') continue;
-
         for (const alias of def.folderAliases) {
-          if (cleanSegment === alias || cleanSegment.startsWith(`${alias} `) || cleanSegment.endsWith(` ${alias}`)) {
+          if (cleanSegment === alias) {
+            return def.id;
+          }
+        }
+      }
+
+      // 2. Prefix or suffix match (e.g. "PS2 Games" or "Roms PS2")
+      for (const def of Object.values(PLATFORM_DEFINITIONS)) {
+        if (def.id === 'Unknown' || def.id === 'Retro') continue;
+        for (const alias of def.folderAliases) {
+          if (cleanSegment.startsWith(`${alias} `) || cleanSegment.endsWith(` ${alias}`)) {
             return def.id;
           }
         }

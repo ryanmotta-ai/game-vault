@@ -31,6 +31,37 @@ export const IPC_CHANNELS = {
   SETTINGS_GET_ALL: 'settings:getAll',
   SETTINGS_SET: 'settings:set',
 
+<<<<<<< Updated upstream
+=======
+  // Integrations & Connected Services Hub
+  INTEGRATIONS_LIST: 'integrations:list',
+  INTEGRATIONS_GET: 'integrations:get',
+  INTEGRATIONS_GET_CONNECTIONS: 'integrations:getConnections',
+  INTEGRATIONS_CONNECT: 'integrations:connect',
+  INTEGRATIONS_DISCONNECT: 'integrations:disconnect',
+  INTEGRATIONS_REMOVE_CONNECTION: 'integrations:removeConnection',
+  INTEGRATIONS_TEST: 'integrations:test',
+  INTEGRATIONS_GET_HEALTH: 'integrations:getHealth',
+
+  // Metadata & Artwork Scraping (Phase 5A)
+  METADATA_SCRAPE_GAME: 'metadata:scrapeGame',
+  METADATA_SCRAPE_ALL: 'metadata:scrapeAll',
+  METADATA_SEARCH: 'metadata:search',
+  METADATA_APPLY_CANDIDATE: 'metadata:applyCandidate',
+  METADATA_GET_DETAILS: 'metadata:getDetails',
+  METADATA_SET_USER_OVERRIDE: 'metadata:setUserOverride',
+  METADATA_REMOVE_USER_OVERRIDE: 'metadata:removeUserOverride',
+  METADATA_GET_REVIEW_QUEUE: 'metadata:getReviewQueue',
+  METADATA_RESOLVE_REVIEW: 'metadata:resolveReview',
+  METADATA_SAVE_CUSTOM_ARTWORK: 'metadata:saveCustomArtwork',
+  METADATA_BROWSE_ARTWORK_FILE: 'metadata:browseArtworkFile',
+  METADATA_ENQUEUE_JOB: 'metadata:enqueueJob',
+  METADATA_GET_JOB_STATUS: 'metadata:getJobStatus',
+  METADATA_GET_CACHE_STATS: 'metadata:getCacheStats',
+  METADATA_CLEAR_CACHE: 'metadata:clearCache',
+  METADATA_PROGRESS_EVENT: 'metadata:progressEvent',
+
+>>>>>>> Stashed changes
   // System & Window
   SYSTEM_GET_INFO: 'system:getInfo',
   WINDOW_MINIMIZE: 'window:minimize',

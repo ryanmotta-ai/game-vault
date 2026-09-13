@@ -1,4 +1,4 @@
-export type GameState = 'CLOUD' | 'DOWNLOADING' | 'READY';
+export type GameState = 'CLOUD' | 'QUEUED' | 'DOWNLOADING' | 'PREPARING' | 'READY' | 'ERROR';
 
 export type GamePlatform =
   | 'PC'
@@ -39,6 +39,16 @@ export interface Game {
   installedPath?: string;
   playTimeSeconds: number;
   lastPlayedAt?: string;
+  lastAccessedAt?: string;
+  pinned?: boolean;
+  genres?: string[];
+  rating?: number;
+  screenshotUrls?: string[];
+  localCoverPath?: string;
+  localBannerPath?: string;
+  localScreenshotPaths?: string[];
+  metadataSource?: string;
+  metadataScrapedAt?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -90,22 +100,117 @@ export interface DownloadItem {
   totalBytes: number;
   downloadedBytes: number;
   downloadSpeedBps: number;
+  destinationPath?: string;
+  partialPath?: string;
   errorMessage?: string;
+  priority?: number;
+  retryCount?: number;
+  lastErrorCode?: string;
+  resumeSupported?: boolean;
+  remoteModifiedTime?: string;
+  remoteEtag?: string;
+  remoteMd5?: string;
+  errorReason?: string;
   createdAt: string;
+  startedAt?: string;
+  updatedAt?: string;
   completedAt?: string;
 }
+
+export interface DownloadProgressEvent {
+  downloadId: string;
+  gameId: string;
+  gameFileId?: string;
+  bytesTransferred: number;
+  totalBytes: number;
+  speedBps: number;
+  percentage: number;
+  status: DownloadStatus;
+  etaSeconds?: number;
+  retryCount?: number;
+  nextRetryInSeconds?: number;
+}
+
+export interface DownloadStateChangedEvent {
+  downloadId: string;
+  gameId: string;
+  gameFileId?: string;
+  status: DownloadStatus;
+  error?: string;
+  errorReason?: string;
+  retryCount?: number;
+  nextRetryInSeconds?: number;
+}
+
+export type EmulatorAdapterType =
+  | 'pcsx2'
+  | 'dolphin'
+  | 'duckstation'
+  | 'ppsspp'
+  | 'retroarch'
+  | 'custom';
+
+export type LauncherType = 'emulator' | 'native_pc';
 
 export interface Emulator {
   id: string;
   name: string;
-  platform: GamePlatform;
+  adapterType?: EmulatorAdapterType;
   executablePath: string;
+  supportedPlatforms?: GamePlatform[];
   defaultArgs?: string;
-  configPath?: string;
-  isInstalled: boolean;
+  fullscreenArgs?: string;
+  workingDirectory?: string;
   version?: string;
+  detected?: boolean;
+  enabled?: boolean;
   createdAt: string;
   updatedAt: string;
+  // Backward compatibility fields
+  platform?: GamePlatform;
+  isInstalled?: boolean;
+  configPath?: string;
+}
+
+export interface LaunchProfile {
+  id: string;
+  gameId: string;
+  launcherType: LauncherType;
+  emulatorId?: string;
+  executablePath?: string;
+  argumentsTemplate?: string;
+  workingDirectory?: string;
+  fullscreen: boolean;
+  playbackMode?: PlaybackMode;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GameSession {
+  id: string;
+  gameId: string;
+  startedAt: string;
+  endedAt?: string;
+  durationSeconds: number;
+  launcherType: LauncherType;
+  emulatorId?: string;
+  exitCode?: number;
+  crashed: boolean;
+  createdAt: string;
+}
+
+export interface LaunchCommand {
+  executable: string;
+  args: string[];
+  cwd: string;
+  env?: Record<string, string>;
+}
+
+export interface GameRunningStateEvent {
+  gameId: string;
+  sessionId?: string;
+  isRunning: boolean;
+  startedAt?: string;
 }
 
 export interface AppSetting {
@@ -146,6 +251,7 @@ export interface CloudFile {
   classificationConfidence: number; // 0 to 1
   firstSeenAt: string;
   lastSeenAt: string;
+  lastSeenRunId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -199,3 +305,266 @@ export interface GameCandidate {
   edition?: string;
   discIndex?: number;
 }
+
+// --- Phase 3C: Preparation & Smart Cache Types ---
+
+export type PreparationJobStatus =
+  | 'QUEUED'
+  | 'EXTRACTING'
+  | 'VALIDATING'
+  | 'FINALIZING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED';
+
+export interface PreparationJob {
+  id: string;
+  gameId: string;
+  status: PreparationJobStatus;
+  step?: string;
+  progressPercentage: number;
+  totalBytes: number;
+  processedBytes: number;
+  tempDir?: string;
+  destinationDir?: string;
+  primaryFilePath?: string;
+  errorMessage?: string;
+  createdAt: string;
+  updatedAt: string;
+  completedAt?: string;
+}
+
+export interface PreparationProgressEvent {
+  jobId: string;
+  gameId: string;
+  status: PreparationJobStatus;
+  step?: string;
+  progressPercentage: number;
+  totalBytes: number;
+  processedBytes: number;
+  message?: string;
+}
+
+export type ManifestFileRole = 'PRIMARY' | 'TRACK' | 'AUXILIARY' | 'DOCUMENT' | 'INSTALLER';
+
+export interface ManifestFileEntry {
+  path?: string;
+  relativePath: string;
+  sizeBytes: number;
+  md5Checksum?: string;
+  role: ManifestFileRole;
+}
+
+export interface GameManifest {
+  gameId: string;
+  title: string;
+  platform: GamePlatform;
+  preparedAt: string;
+  primaryExecutableOrRom: string;
+  totalLocalSize: number;
+  installRequired?: boolean;
+  files: ManifestFileEntry[];
+  sourceArtifactIds?: string[];
+  integrityStatus: 'VERIFIED' | 'UNVERIFIED' | 'CORRUPTED';
+}
+
+export type CacheCategory = 'PARTIAL' | 'TEMP' | 'GAME' | 'ARTWORK';
+
+export interface CacheBreakdown {
+  partialBytes: number;
+  tempBytes: number;
+  gameBytes: number;
+  artworkBytes: number;
+  totalBytes: number;
+  freeDiskBytes: number;
+  configuredLimitBytes: number;
+  cachedGamesCount: number;
+}
+
+export interface EvictionCandidate {
+  game: Game;
+  localSizeBytes: number;
+  lastPlayedAt?: string;
+  lastAccessedAt?: string;
+  pinned: boolean;
+}
+
+export type PlaybackStrategy = 'INSTANT_HYDRATION' | 'PROGRESSIVE_PLAY' | 'LOCAL_REQUIRED';
+export type PlaybackMode = 'auto' | 'always_local' | 'experimental_streaming';
+export type NetworkQuality = 'POOR' | 'FAIR' | 'GOOD' | 'EXCELLENT';
+
+export interface RangeReadResult {
+  data: Buffer;
+  contentRange?: string;
+  totalSize?: number;
+}
+
+export interface StreamingBlockManifest {
+  fileId: string;
+  remoteFileId: string;
+  accountId: string;
+  expectedSize: number;
+  blockSize: number;
+  blockCount: number;
+  remoteVersion: string;
+  cachedBlocks: number[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StreamingMetrics {
+  averageRangeLatencyMs: number;
+  rangeThroughputBps: number;
+  cacheHitRate: number;
+  prefetchHitRate: number;
+  stallsCount: number;
+  bytesFetched: number;
+  bytesPrefetched: number;
+  wastedPrefetchBytes: number;
+}
+
+export interface EffectivePlaybackStrategy {
+  strategy: PlaybackStrategy;
+  reason: string;
+  estimatedHydrationTimeMs?: number;
+  isStreamable?: boolean;
+}
+
+// ============================================================================
+// Phase 5A: Metadata & Artwork Pipeline Types
+// ============================================================================
+
+export type MatchConfidence = 'EXACT' | 'HIGH' | 'MEDIUM' | 'LOW' | 'AMBIGUOUS';
+export type MetadataSourceStatus = 'MATCHED' | 'REVIEW_REQUIRED' | 'SKIPPED' | 'REJECTED' | 'USER_CONFIRMED';
+export type MetadataJobStatus =
+  | 'QUEUED'
+  | 'SEARCHING'
+  | 'MATCHED'
+  | 'DOWNLOADING_MEDIA'
+  | 'COMPLETED'
+  | 'REVIEW_REQUIRED'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'SKIPPED';
+export type MetadataJobPriority = 'USER_REQUESTED' | 'NORMAL' | 'BACKGROUND';
+
+export type GameArtworkType =
+  | 'COVER_FRONT'
+  | 'COVER_BACK'
+  | 'BOX_3D'
+  | 'LOGO'
+  | 'BACKGROUND'
+  | 'SCREENSHOT'
+  | 'TITLE_SCREEN'
+  | 'FANART'
+  | 'ICON'
+  | 'VIDEO'
+  | 'MANUAL';
+
+export interface GameMetadata {
+  gameId: string;
+  canonicalTitle?: string;
+  sortTitle?: string;
+  description?: string;
+  releaseDate?: string;
+  releaseYear?: number;
+  developer?: string;
+  publisher?: string;
+  genres?: string[];
+  players?: string;
+  rating?: number;
+  region?: string;
+  language?: string;
+  sourceSummary?: string;
+  userOverrideFlags?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GameMetadataSource {
+  id: string;
+  gameId: string;
+  providerId: string;
+  providerGameId: string;
+  connectionId?: string;
+  confidence: MatchConfidence;
+  matchSignals?: Record<string, unknown>;
+  matchedAt: string;
+  lastSyncedAt?: string;
+  sourceDataHash?: string;
+  status: MetadataSourceStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GameArtwork {
+  id: string;
+  gameId: string;
+  type: GameArtworkType;
+  provider: string;
+  providerMediaId?: string;
+  sourceUrl?: string;
+  localPath: string;
+  width?: number;
+  height?: number;
+  mimeType?: string;
+  fileSize?: number;
+  checksum?: string;
+  isPrimary: boolean;
+  isUserCustom: boolean;
+  status: 'CACHED' | 'MISSING' | 'PENDING';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GameIdentityQuery {
+  gameId: string;
+  title: string;
+  cleanTitle: string;
+  platform: GamePlatform | string;
+  normalizedPlatform: GamePlatform | string;
+  filename?: string;
+  romFilename?: string;
+  extension?: string;
+  region?: string;
+  discNumber?: number;
+  revision?: string;
+  serial?: string;
+  hash?: string;
+  md5?: string;
+  sha1?: string;
+  crc?: string;
+  releaseYearHint?: number;
+  systemId?: string | number;
+}
+
+export interface MetadataCandidate {
+  provider: string;
+  providerGameId: string;
+  title: string;
+  platform?: string;
+  releaseDate?: string;
+  releaseYear?: number;
+  region?: string;
+  developer?: string;
+  publisher?: string;
+  description?: string;
+  genres?: string[];
+  rating?: number;
+  coverUrl?: string;
+  logoUrl?: string;
+  backgroundUrl?: string;
+  screenshotUrls?: string[];
+  matchSignals: {
+    titleScore: number;
+    platformMatch: boolean;
+    regionMatch?: boolean;
+    yearMatch?: boolean;
+    serialMatch?: boolean;
+    hashMatch?: boolean;
+    filenameSimilarity?: number;
+  };
+  totalScore: number;
+  confidence: MatchConfidence;
+}
+
